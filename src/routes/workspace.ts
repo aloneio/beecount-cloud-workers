@@ -2254,16 +2254,6 @@ workspaceRouter.get('/net-worth-history', async (c) => {
     } else if (tx.tx_type === 'transfer') {
       // 转账：from_account 减少，to_account 增加 — 总净值不变但影响账户余额
       // 不影响 assets/liabilities 聚合（与原版一致）
-    } else if (tx.tx_type === 'adjustment' && tx.account_sync_id) {
-      const rate = ratesToBase[accountCurrency[tx.account_sync_id]] ?? 1;
-      const convertedAmt = tx.amount * rate;
-      if (!monthlyChanges[month]) monthlyChanges[month] = { assets: 0, liabilities: 0 };
-      if (convertedAmt >= 0) {
-        monthlyChanges[month].assets += convertedAmt;
-      } else {
-        monthlyChanges[month].liabilities += Math.abs(convertedAmt);
-      }
-      accountBalances[tx.account_sync_id] = (accountBalances[tx.account_sync_id] ?? 0) + convertedAmt;
     }
   }
 
