@@ -653,6 +653,20 @@ class InMemoryDB {
       return vals.includes(leftVal as string);
     }
 
+    const likeMatch = condition.match(/(.+?)\s+LIKE\s+(\?|'[^']*')(?:\s+ESCAPE\s+\?)?/i);
+    if (likeMatch) {
+      const leftVal = String(this.resolveColValue(row, likeMatch[1]) ?? '');
+      const pattern = likeMatch[2] === '?' ? String(params[paramIdx.current++]) : likeMatch[2].replace(/^'(.*)'$/, '$1');
+      // 消耗 ESCAPE ? 参数，保持后续条件的绑定位置对齐
+      if (/\s+ESCAPE\s+\?/i.test(likeMatch[0])) paramIdx.current++;
+      // SQL LIKE 语义：% 任意串、_ 单个字符；SQLite 对 ASCII 大小写不敏感
+      const regex = new RegExp(
+        `^${pattern.split('%').map(seg => seg.split('_').join('.')).join('[\\s\\S]*')}$`,
+        'i',
+      );
+      return regex.test(leftVal);
+    }
+
     let eqMatch = condition.match(/(.+?)\s*(IS\s+NOT|!=|<>|=|==)\s*(\?|NULL|'[^']*'|\d+(?:\.\d+)?)/i);
     if (eqMatch) {
       const leftVal = this.resolveColValue(row, eqMatch[1]);
