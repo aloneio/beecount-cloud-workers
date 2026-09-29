@@ -653,6 +653,13 @@ class InMemoryDB {
       return vals.includes(leftVal as string);
     }
 
+    const instrMatch = condition.match(/INSTR\(([\w.]+),\s*\?\)\s*>\s*0/i);
+    if (instrMatch) {
+      const leftVal = String(this.resolveColValue(row, instrMatch[1]) ?? '');
+      const needle = String(params[paramIdx.current++] ?? '');
+      return leftVal.includes(needle);
+    }
+
     const likeMatch = condition.match(/(.+?)\s+LIKE\s+(\?|'[^']*')(?:\s+ESCAPE\s+\?)?/i);
     if (likeMatch) {
       const leftVal = String(this.resolveColValue(row, likeMatch[1]) ?? '');
