@@ -137,6 +137,13 @@ chmod +x setup.sh
 
 > 💡 权限说明：Token 使用 **Workers: Edit + D1: Edit** 权限，覆盖 Worker 部署、D1 数据库创建、D1 Export API 生成 `db.sqlite3` 备份三项操作，Fork 用户开箱即用。
 
+### Fork 同步上游更新
+
+Fork 后 GitHub **不会自动**同步上游的新代码，需要手动同步或启用定时同步：
+
+- **一键同步**：Fork 仓库 → **Actions** → **Sync from upstream** → **Run workflow**，即可同步上游最新代码。Fork 无本地提交时直接对齐上游历史（可快进、无分叉），有本地提交时自动合并保留双方历史
+- **每天自动同步**：GitHub 默认**禁用 fork 里的定时任务**，需在 Fork 仓库 → **Settings** → **Actions** → **General** 中启用 Scheduled workflows，之后每天凌晨 3 点自动检查
+
 ### 方式三：手动部署
 
 ```bash

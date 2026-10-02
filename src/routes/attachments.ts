@@ -22,6 +22,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { uploadToStorage, downloadFromStorage, deleteFromStorage } from '../lib/storage-adapter';
+import { sweepDuplicateAttachments } from '../lib/attachment-dedup';
 
 // 附件统一以 attachments/{ledgerExternalId}/{fileId}_{fileName} 为 key
 // （storage-adapter 内部会自动加 beecount/ 前缀，key 本身不含该前缀）
@@ -118,53 +119,49 @@ const handleUpload = async (c: any) => {
             .bind(sha256Hash, ledger.id)
             .first() as { id: string } | null;
 
-        if (existing) {
-            const response = {
-                file_id: existing.id,
-                ledger_id: ledger.external_id,
-                sha256: sha256Hash,
-                size,
-                mime_type: mimeType,
-                file_name: actualFileName,
-                created_at: new Date().toISOString()
-            };
-            return c.json(response);
-        }
-
-        const fileId = randomUUID();
-        
-        // 统一附件 key：attachments/{ledgerExternalId}/{fileId}_{fileName}
-        // storage-adapter 内部会加 beecount/ 前缀并回退到所有备份远端
-        const storageKey = `attachments/${ledger.external_id}/${fileId}_${actualFileName}`;
-        const uploadResult = await uploadToStorage(db, c.env, storageKey, new Uint8Array(fileBuffer), mimeType);
-        if (!uploadResult.ok) {
-            serverLogger.error('src.routers.attachments', '[ATTACHMENT] Upload failed: no available storage', { storageKey });
-            return c.json({ error: 'Failed to upload attachment (no available storage)' }, 503);
-        }
-        serverLogger.info('src.routers.attachments', '[ATTACHMENT] Upload ok:', storageKey);
-
         const now = new Date().toISOString();
-        await db
-            .prepare(
-                `INSERT INTO attachment_files
-                 (id, ledger_id, user_id, sha256, size_bytes, mime_type, file_name, storage_path, attachment_kind, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'transaction', ?)`
-            )
-            .bind(fileId, ledger.id, userId, sha256Hash, size, mimeType, actualFileName, storageKey, now)
-            .run();
+        let effectiveFileId: string;
+        if (existing) {
+            effectiveFileId = existing.id;
+        } else {
+            const fileId = randomUUID();
 
-        // 并发去重兜底：多个请求同时上传同一文件时（去重检查与 INSERT 之间
-        // 是竞态），统一返回最早插入的那行 id，避免同一文件出现多个 file_id。
-        // 重复行可在后续数据清理中合并。
-        const canonical = await db
-            .prepare(
-                `SELECT id FROM attachment_files
-                 WHERE sha256 = ? AND ledger_id = ? AND attachment_kind = 'transaction'
-                 ORDER BY created_at ASC, id ASC LIMIT 1`
-            )
-            .bind(sha256Hash, ledger.id)
-            .first() as { id: string } | null;
-        const effectiveFileId = canonical?.id ?? fileId;
+            // 统一附件 key：attachments/{ledgerExternalId}/{fileId}_{fileName}
+            // storage-adapter 内部会加 beecount/ 前缀并回退到所有备份远端
+            const storageKey = `attachments/${ledger.external_id}/${fileId}_${actualFileName}`;
+            const uploadResult = await uploadToStorage(db, c.env, storageKey, new Uint8Array(fileBuffer), mimeType);
+            if (!uploadResult.ok) {
+                serverLogger.error('src.routers.attachments', '[ATTACHMENT] Upload failed: no available storage', { storageKey });
+                return c.json({ error: 'Failed to upload attachment (no available storage)' }, 503);
+            }
+            serverLogger.info('src.routers.attachments', '[ATTACHMENT] Upload ok:', storageKey);
+
+            await db
+                .prepare(
+                    `INSERT INTO attachment_files
+                     (id, ledger_id, user_id, sha256, size_bytes, mime_type, file_name, storage_path, attachment_kind, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'transaction', ?)`
+                )
+                .bind(fileId, ledger.id, userId, sha256Hash, size, mimeType, actualFileName, storageKey, now)
+                .run();
+
+            // 并发去重兜底：多个请求同时上传同一文件时（去重检查与 INSERT 之间
+            // 是竞态），统一返回最早插入的那行 id，避免同一文件出现多个 file_id。
+            const canonical = await db
+                .prepare(
+                    `SELECT id FROM attachment_files
+                     WHERE sha256 = ? AND ledger_id = ? AND attachment_kind = 'transaction'
+                     ORDER BY created_at ASC, id ASC LIMIT 1`
+                )
+                .bind(sha256Hash, ledger.id)
+                .first() as { id: string } | null;
+            effectiveFileId = canonical?.id ?? fileId;
+        }
+
+        // 竞态清扫：同 (sha, ledger, kind) 只保留最早行；未被任何交易引用的
+        // 重复行连同存储对象一起删除（对齐原版 gc 语义，已引用行即使不是
+        // 最早行也保留，避免破坏交易预览）。
+        await sweepDuplicateAttachments(db, c.env, sha256Hash, ledger.id, 'transaction');
 
         // 对齐原版：附件不写 sync_changes（App 不识别 attachment 实体类型，
         // 附件信息通过交易 payload 的 attachments 字段同步）
