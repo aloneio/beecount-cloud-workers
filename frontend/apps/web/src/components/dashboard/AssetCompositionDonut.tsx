@@ -1,11 +1,16 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
-import type { WorkspaceAccount } from '@beecount/api-client'
+import type { ExchangeRateOverride, ExchangeRatesResponse, WorkspaceAccount } from '@beecount/api-client'
 import { Card, CardContent, CardHeader, CardTitle, useLocale, useT } from '@beecount/ui'
+import { accountBalance, effectiveRateToBase } from '@beecount/web-features'
 
 import { formatCompactTick } from '../../i18n/format'
 
 interface Props {
   accounts: WorkspaceAccount[]
+  currency: string
+  rates: ExchangeRatesResponse | null
+  rateOverrides: ExchangeRateOverride[]
+  loading?: boolean
 }
 
 // 与 AccountsPanel 里的 TRADABLE / VALUATION 分组 + 颜色一致。
@@ -24,23 +29,29 @@ const TYPE_META: Record<string, { color: string; group: 'asset' | 'liability' }>
   loan: { color: '#dc2626', group: 'liability' }
 }
 
-export function AssetCompositionDonut({ accounts }: Props) {
+export function AssetCompositionDonut({ accounts, currency, rates, rateOverrides, loading = false }: Props) {
   const t = useT()
   const { locale } = useLocale()
   const chinese = locale.startsWith('zh')
+  const base = currency.toUpperCase()
+  // 切账本时绝不复用另一 base 的自动汇率。override 自带 base/quote,由共享函数匹配。
+  const auto = rates?.base.toUpperCase() === base ? rates : null
+  const missing = new Set<string>()
   // 按类型**带符号**累加(与 assetAggregation 的负债符号口径一致:欠款为负、
   // 溢缴为正,透支资产为负),饼图分段才对类型合计取 abs 当体量 —— 绝不逐账户
   // abs,否则同类型内正负互抵的账户会被虚增。
   const totals = new Map<string, number>()
   for (const a of accounts) {
     const key = a.account_type || 'other'
-    // 用 balance(= initial_balance + 净流水)而非 initial_balance。用户常常
-    // 把初始余额留 0,靠日常记账累积现金/微信/支付宝等账户流水 —— 若只看
-    // initial_balance,donut 会全空;资产页走 balance 兜底所以正常。
-    const raw = typeof a.balance === 'number' && a.balance !== null
-      ? a.balance
-      : a.initial_balance ?? 0
-    totals.set(key, (totals.get(key) || 0) + raw)
+    const quote = (a.currency || 'CNY').toUpperCase()
+    const effective = effectiveRateToBase(quote, base, auto, rateOverrides)
+    if (!effective) {
+      missing.add(quote)
+      continue // 缺失汇率必须显式提示,绝不将外币余额按 1:1 混入。
+    }
+    // balance 保持账户原币;仅图表展示折到账本本位币,不改账户余额/交易快照。
+    const converted = accountBalance(a) * effective.rate
+    totals.set(key, (totals.get(key) || 0) + converted)
   }
   const allRows = Array.from(totals.entries())
     .map(([type, signed]) => ({
@@ -75,10 +86,17 @@ export function AssetCompositionDonut({ accounts }: Props) {
   return (
     <Card className="bc-panel overflow-hidden">
       <CardHeader>
-        <CardTitle className="text-base">{t('home.assetComp.title')}</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-base">{t('home.assetComp.title')}</CardTitle>
+          <span className="text-xs text-muted-foreground">{base}</span>
+        </div>
       </CardHeader>
       <CardContent>
-        {data.length === 0 ? (
+        {loading ? (
+          <div role="status" className="flex h-48 items-center justify-center text-xs text-muted-foreground">
+            {t('common.loading')}
+          </div>
+        ) : data.length === 0 ? (
           <div className="flex h-48 items-center justify-center text-xs text-muted-foreground">
             {t('home.assetComp.empty')}
           </div>
@@ -138,6 +156,11 @@ export function AssetCompositionDonut({ accounts }: Props) {
             </ul>
           </div>
         )}
+        {!loading && missing.size > 0 ? (
+          <p role="status" className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+            {t('accounts.converted.missing', { currencies: [...missing].sort().join(', ') })}
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   )
