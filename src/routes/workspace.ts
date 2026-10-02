@@ -407,13 +407,13 @@ workspaceRouter.get('/accounts', async (c) => {
     const accountSyncId = row.sync_id as string;
     const initialBalance = (row.initial_balance as number) ?? 0;
 
-    // 计算该账户关联的交易统计
+    // 按账户币种统计（与 read.ts 一致）；native_amount 是账本本位币快照。
     const txStats = await db.prepare(`
       SELECT 
-        COALESCE(SUM(CASE WHEN tx_type = 'expense' AND account_sync_id = ? THEN COALESCE(native_amount, amount) ELSE 0 END), 0) as expense_in,
-        COALESCE(SUM(CASE WHEN tx_type = 'income' AND account_sync_id = ? THEN COALESCE(native_amount, amount) ELSE 0 END), 0) as income_in,
-        COALESCE(SUM(CASE WHEN tx_type = 'transfer' AND from_account_sync_id = ? THEN COALESCE(native_amount, amount) ELSE 0 END), 0) as expense_transfer,
-        COALESCE(SUM(CASE WHEN tx_type = 'transfer' AND to_account_sync_id = ? THEN COALESCE(native_amount, amount) ELSE 0 END), 0) as income_transfer,
+        COALESCE(SUM(CASE WHEN tx_type = 'expense' AND account_sync_id = ? THEN amount ELSE 0 END), 0) as expense_in,
+        COALESCE(SUM(CASE WHEN tx_type = 'income' AND account_sync_id = ? THEN amount ELSE 0 END), 0) as income_in,
+        COALESCE(SUM(CASE WHEN tx_type = 'transfer' AND from_account_sync_id = ? THEN amount ELSE 0 END), 0) as expense_transfer,
+        COALESCE(SUM(CASE WHEN tx_type = 'transfer' AND to_account_sync_id = ? THEN amount ELSE 0 END), 0) as income_transfer,
         COUNT(CASE WHEN account_sync_id = ? OR from_account_sync_id = ? OR to_account_sync_id = ? THEN 1 END) as tx_count
       FROM read_tx_projection WHERE ledger_id IN (${ledgerInternalIds.map(() => '?').join(',')})
     `).bind(accountSyncId, accountSyncId, accountSyncId, accountSyncId, accountSyncId, accountSyncId, accountSyncId, ...ledgerInternalIds).first<{ expense_in: number; income_in: number; expense_transfer: number; income_transfer: number; tx_count: number }>();
