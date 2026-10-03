@@ -55,6 +55,7 @@ export function HomeTopAccounts({ accounts, currency = 'CNY', onSelectAccount }:
         type: a.account_type || 'other',
         count: a.tx_count ?? 0,
         balance: a.balance ?? a.initial_balance ?? 0,
+        currency: (a.currency || currency).toUpperCase(),
         expense: a.expense_total ?? 0
       }))
       .filter((a) => a.count > 0)
@@ -62,7 +63,7 @@ export function HomeTopAccounts({ accounts, currency = 'CNY', onSelectAccount }:
       .slice(0, 5)
     const maxCount = withStats[0]?.count ?? 0
     return { list: withStats, maxCount }
-  }, [accounts])
+  }, [accounts, currency])
 
   return (
     <Card className="bc-panel overflow-hidden">
@@ -123,7 +124,8 @@ export function HomeTopAccounts({ accounts, currency = 'CNY', onSelectAccount }:
                       </div>
                       <Amount
                         value={a.balance}
-                        currency={currency}
+                        currency={a.currency}
+                        showCurrency
                         size="xs"
                         tone={a.balance < 0 ? 'negative' : 'muted'}
                         className="shrink-0"
