@@ -26,6 +26,7 @@ import { useLedgers } from '../../context/LedgersContext'
 import { usePageCache } from '../../context/PageDataCacheContext'
 import { useSyncRefresh } from '../../context/SyncSocketContext'
 import { setAppBadge } from '../../lib/pwa-badge'
+import { mergeOverviewAccounts } from '../../lib/overviewAccounts'
 import { dispatchOpenDetailCategory } from '../../lib/txDialogEvents'
 
 /**
@@ -128,11 +129,14 @@ export function OverviewPage() {
   const loadAccountsAndTags = useCallback(async () => {
     if (!activeLedgerId) return
     try {
-      const [a, tg] = await Promise.all([
+      const [globalAccounts, ledgerAccounts, tg] = await Promise.all([
+        // 真实当前余额：账户是 user-global，必须与资产页使用相同的全局口径。
+        fetchWorkspaceAccounts(token, { limit: 500 }),
+        // 当前账本活动：仅用于 tx_count / income_total / expense_total。
         fetchWorkspaceAccounts(token, { ledgerId: activeLedgerId, limit: 500 }),
         fetchWorkspaceTags(token, { ledgerId: activeLedgerId, limit: 500 }),
       ])
-      setAccounts(a)
+      setAccounts(mergeOverviewAccounts(globalAccounts, ledgerAccounts))
       setTags(tg)
     } catch {
       // dashboard 静默降级
