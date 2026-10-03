@@ -454,21 +454,24 @@ export function AssetsCompositionMini({
   approx?: boolean
 }) {
   const t = useT()
-  // 「资产构成」只含资产类：负债（信用卡/贷款）不进饼图，也不计入中心合计/百分比 ——
-  // 它们体现在「负债」汇总里，不属于资产构成。groups 含负债类型，按 isLiability 过滤掉。
-  // 资产小计带符号（透支资产为负），饼图分段要的是体量 —— 对资产组合计取 abs。
-  const data = groups
+  // 与 Overview AssetCompositionDonut 保持同一口径：
+  // - 中心「合计」= 所有资产类账户的带符号合计（透支/负余额会抵减资产）；
+  // - 饼图只展示正余额资产，负余额资产不能 abs() 后伪装成正资产切片；
+  // - 百分比分母 = 实际展示的正余额切片之和，因此不会因负余额抵减而出现 >100%。
+  const signedRows = groups
     .filter((g) => !g.isLiability)
     .map((g) => ({
       type: g.type,
       label: g.label,
       color: g.color,
-      value: Math.abs(g.subtotals.reduce((s, x) => s + x.value, 0))
+      signed: g.subtotals.reduce((s, x) => s + x.value, 0)
     }))
-  // 中心合计 / 扇区 / 百分比分母都用「资产合计」（资产组之和）—— 绝不把 |负债|
-  // 算进来，否则信用卡等负债会被计入资产构成（这正是之前的 bug）。
-  const assetTotal = data.reduce((s, d) => s + d.value, 0)
-  const total = assetTotal > 0 ? assetTotal : 1
+  const data = signedRows
+    .filter((d) => d.signed > 0)
+    .map((d) => ({ ...d, value: d.signed }))
+  const assetTotal = signedRows.reduce((s, d) => s + d.signed, 0)
+  const shownAssetTotal = data.reduce((s, d) => s + d.value, 0)
+  const total = shownAssetTotal > 0 ? shownAssetTotal : 1
   // conic-gradient 分段
   let acc = 0
   const stops: string[] = []
@@ -529,7 +532,7 @@ export function AssetsCompositionMini({
           {/* legend */}
           <ul className="min-w-0 flex-1 space-y-1.5">
             {data.map((d) => {
-              const pct = assetTotal > 0 ? (d.value / assetTotal) * 100 : 0
+              const pct = shownAssetTotal > 0 ? (d.value / shownAssetTotal) * 100 : 0
               return (
                 <li key={d.type} className="flex items-center gap-2 text-xs">
                   <span
