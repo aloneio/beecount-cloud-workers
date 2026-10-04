@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TOOL_DEFS, selfCall, PROTOCOL_VERSION, SUPPORTED_VERSIONS, SERVER_INFO } from '../src/routes/mcp';
+import { TOOL_DEFS, selfCall, PROTOCOL_VERSION, SUPPORTED_VERSIONS, SERVER_INFO, parseTransactionDatetime } from '../src/routes/mcp';
 
 // 从原版 Python server.py 提取的工具定义
 const EXPECTED_TOOLS: { name: string; params: string[]; required: string[] }[] = [
@@ -14,9 +14,9 @@ const EXPECTED_TOOLS: { name: string; params: string[]; required: string[] }[] =
   { name: 'get_ledger_stats', params: ['ledger_id'], required: [] },
   { name: 'get_analytics_summary', params: ['scope', 'period', 'ledger_id'], required: [] },
   { name: 'search', params: ['q', 'limit'], required: ['q'] },
-  { name: 'create_transaction', params: ['amount', 'tx_type', 'category', 'account', 'happened_at', 'note', 'tags', 'ledger_id', 'currency'], required: ['amount'] },
-  { name: 'create_transactions', params: ['transactions', 'ledger_id'], required: ['transactions'] },
-  { name: 'update_transaction', params: ['sync_id', 'amount', 'tx_type', 'category', 'account', 'happened_at', 'note', 'tags'], required: ['sync_id'] },
+  { name: 'create_transaction', params: ['amount', 'tx_type', 'category', 'account', 'happened_at', 'time_zone', 'note', 'tags', 'ledger_id', 'currency'], required: ['amount'] },
+  { name: 'create_transactions', params: ['transactions', 'time_zone', 'ledger_id'], required: ['transactions'] },
+  { name: 'update_transaction', params: ['sync_id', 'amount', 'tx_type', 'category', 'account', 'happened_at', 'time_zone', 'note', 'tags'], required: ['sync_id'] },
   { name: 'delete_transaction', params: ['sync_id', 'confirm'], required: ['sync_id'] },
   { name: 'create_category', params: ['name', 'kind', 'parent_name', 'icon', 'ledger_id'], required: ['name'] },
   { name: 'update_budget', params: ['budget_id', 'amount'], required: ['budget_id', 'amount'] },
@@ -292,5 +292,56 @@ describe('MCP Protocol Version (2026-07-28)', () => {
   it('should have a server info with name and version', () => {
     expect(SERVER_INFO.name).toBe('beecount-mcp');
     expect(SERVER_INFO.version).toBe('1.0.0');
+  });
+});
+
+// ── 交易时间解析（对齐原版 datetime_utils.parse_transaction_datetime）────────
+describe('MCP transaction datetime parsing', () => {
+  // resolveCloudTzOffset 会读 system_settings；无设置时返回 null
+  function dbWithoutTz(): D1Database {
+    return {
+      prepare() {
+        return { bind() { return this; }, async first() { return null; } };
+      },
+    } as unknown as D1Database;
+  }
+
+  function dbWithOffset(minutes: number): D1Database {
+    return {
+      prepare() {
+        return { bind() { return this; }, async first() { return { value: String(minutes) }; } };
+      },
+    } as unknown as D1Database;
+  }
+
+  it('preserves instants with explicit offsets and converts to UTC', async () => {
+    await expect(parseTransactionDatetime(dbWithoutTz(), {}, '2026-10-03T12:00:00+08:00')).resolves.toBe('2026-10-03T04:00:00.000Z');
+    await expect(parseTransactionDatetime(dbWithoutTz(), {}, '2026-10-03T12:00:00Z')).resolves.toBe('2026-10-03T12:00:00.000Z');
+  });
+
+  it('interprets bare dates in the time_zone argument (Asia/Shanghai = midnight local)', async () => {
+    await expect(parseTransactionDatetime(dbWithoutTz(), {}, '2026-10-03', 'Asia/Shanghai')).resolves.toBe('2026-10-02T16:00:00.000Z');
+  });
+
+  it('interprets bare datetimes with UTC+N style time_zone', async () => {
+    await expect(parseTransactionDatetime(dbWithoutTz(), {}, '2026-10-03T12:00', 'UTC+8')).resolves.toBe('2026-10-03T04:00:00.000Z');
+  });
+
+  it('falls back to the server timezone setting for bare times', async () => {
+    // system_settings.timezone_offset 以 getTimezoneOffset() 存储：UTC+8 = -480
+    await expect(parseTransactionDatetime(dbWithOffset(-480), {}, '2026-10-03T12:00')).resolves.toBe('2026-10-03T04:00:00.000Z');
+  });
+
+  it('prefers the CLOUD_TIMEZONE env var over the DB setting', async () => {
+    await expect(parseTransactionDatetime(dbWithOffset(-300), { CLOUD_TIMEZONE: 'Asia/Shanghai' }, '2026-10-03')).resolves.toBe('2026-10-02T16:00:00.000Z');
+  });
+
+  it('rejects bare times when no timezone is available (never guesses UTC)', async () => {
+    await expect(parseTransactionDatetime(dbWithoutTz(), {}, '2026-10-03T09:30')).rejects.toThrow(/requires a time_zone argument/);
+  });
+
+  it('rejects malformed dates', async () => {
+    await expect(parseTransactionDatetime(dbWithoutTz(), {}, 'not-a-date', 'UTC+8')).rejects.toThrow(/Invalid happened_at/);
+    await expect(parseTransactionDatetime(dbWithoutTz(), {}, '2026-13-45', 'UTC+8')).rejects.toThrow(/Invalid happened_at/);
   });
 });

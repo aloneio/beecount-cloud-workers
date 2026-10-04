@@ -50,9 +50,9 @@ export const TOOL_DEFS: ToolDef[] = [
   { name: 'get_ledger_stats', description: 'Get summary stats for a ledger (transaction/category/account/tag/budget counts).', inputSchema: { type: 'object', properties: { ledger_id: { type: 'string' } } } },
   { name: 'get_analytics_summary', description: 'Income/expense/balance plus top-10 spending categories. scope: \'month\' | \'year\' | \'all\'. period: For month: \'YYYY-MM\'. For year: \'YYYY\'. Defaults to current. ledger_id: Optional, uses active ledger if omitted.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['month', 'year', 'all'] }, period: { type: 'string' }, ledger_id: { type: 'string' } } } },
   { name: 'search', description: 'Full-text fuzzy search across transaction notes, category names, account names.', inputSchema: { type: 'object', properties: { q: { type: 'string' }, limit: { type: 'number', default: 20 } }, required: ['q'] } },
-  { name: 'create_transaction', description: 'Create a new transaction. amount: Positive number; type captured separately via tx_type. tx_type: \'expense\' (default), \'income\', or \'transfer\'. category: Existing category name (server rejects unknown names). account: Existing account name. For transfers this is the from-account. happened_at: ISO date or datetime. Defaults to now. note: Optional memo. tags: Optional list of tag names. ledger_id: Optional; uses active ledger if omitted. currency: ISO 4217 code (e.g. \'USD\', \'JPY\') when the amount is in a foreign currency. Omit to follow the account\'s currency, or the ledger\'s base currency when no account is given. The server converts to the ledger base at current rates and stores both amounts.', inputSchema: { type: 'object', properties: { amount: { type: 'number' }, tx_type: { type: 'string', enum: ['expense', 'income', 'transfer'] }, category: { type: 'string' }, account: { type: 'string' }, happened_at: { type: 'string' }, note: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, ledger_id: { type: 'string' }, currency: { type: 'string' } }, required: ['amount'] } },
-  { name: 'create_transactions', description: 'Create many transactions at once - use this for bulk imports. Far more efficient than calling create_transaction in a loop. transactions: list of objects, each like create_transaction\'s args - {amount (>0), tx_type (expense|income|transfer, default expense), category, account, happened_at (ISO, default now), note, tags, currency (ISO 4217, only for foreign-currency amounts)}. category/account must be existing names. ledger_id: Optional. Max 200 transactions per call.', inputSchema: { type: 'object', properties: { transactions: { type: 'array', items: { type: 'object' } }, ledger_id: { type: 'string' } }, required: ['transactions'] } },
-  { name: 'update_transaction', description: 'Patch an existing transaction. Only the fields you pass are changed.', inputSchema: { type: 'object', properties: { sync_id: { type: 'string' }, amount: { type: 'number' }, tx_type: { type: 'string', enum: ['expense', 'income', 'transfer'] }, category: { type: 'string' }, account: { type: 'string' }, happened_at: { type: 'string' }, note: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } }, required: ['sync_id'] } },
+  { name: 'create_transaction', description: 'Create a new transaction. amount: Positive number; type captured separately via tx_type. tx_type: \'expense\' (default), \'income\', or \'transfer\'. category: Existing category name (server rejects unknown names). account: Existing account name. For transfers this is the from-account. happened_at: ISO date or datetime. Defaults to now. Use a timezone suffix (e.g. \'2026-10-03T12:00:00+08:00\') to pin an instant, or pass time_zone (e.g. \'Asia/Shanghai\' / \'UTC+8\') so bare datetimes are interpreted in that zone. note: Optional memo. tags: Optional list of tag names. ledger_id: Optional; uses active ledger if omitted. currency: ISO 4217 code (e.g. \'USD\', \'JPY\') when the amount is in a foreign currency. Omit to follow the account\'s currency, or the ledger\'s base currency when no account is given. The server converts to the ledger base at current rates and stores both amounts.', inputSchema: { type: 'object', properties: { amount: { type: 'number' }, tx_type: { type: 'string', enum: ['expense', 'income', 'transfer'] }, category: { type: 'string' }, account: { type: 'string' }, happened_at: { type: 'string' }, time_zone: { type: 'string', description: 'IANA name (Asia/Shanghai) or UTC offset (UTC+8 / +08:00). Used when happened_at has no offset.' }, note: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, ledger_id: { type: 'string' }, currency: { type: 'string' } }, required: ['amount'] } },
+  { name: 'create_transactions', description: 'Create many transactions at once - use this for bulk imports. Far more efficient than calling create_transaction in a loop. transactions: list of objects, each like create_transaction\'s args - {amount (>0), tx_type (expense|income|transfer, default expense), category, account, happened_at (ISO, default now), note, tags, currency (ISO 4217, only for foreign-currency amounts)}. category/account must be existing names. time_zone applies to all items without an offset. ledger_id: Optional. Max 200 transactions per call.', inputSchema: { type: 'object', properties: { transactions: { type: 'array', items: { type: 'object' } }, time_zone: { type: 'string', description: 'IANA name (Asia/Shanghai) or UTC offset (UTC+8 / +08:00). Applied to items whose happened_at has no offset.' }, ledger_id: { type: 'string' } }, required: ['transactions'] } },
+  { name: 'update_transaction', description: 'Patch an existing transaction. Only the fields you pass are changed. happened_at: use a timezone suffix to pin an instant, or pass time_zone so bare datetimes are interpreted in that zone.', inputSchema: { type: 'object', properties: { sync_id: { type: 'string' }, amount: { type: 'number' }, tx_type: { type: 'string', enum: ['expense', 'income', 'transfer'] }, category: { type: 'string' }, account: { type: 'string' }, happened_at: { type: 'string' }, time_zone: { type: 'string', description: 'IANA name (Asia/Shanghai) or UTC offset (UTC+8 / +08:00). Used when happened_at has no offset.' }, note: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } }, required: ['sync_id'] } },
   { name: 'delete_transaction', description: 'Delete a transaction. Destructive - two-step confirmation required. Calling with confirm=False returns a confirmation_required placeholder; you must then prompt the user, and only call again with confirm=true after they explicitly agree.', inputSchema: { type: 'object', properties: { sync_id: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['sync_id'] } },
   { name: 'create_category', description: 'Create a new category. Usually unnecessary - prefer existing categories. name: required. kind: expense/income/transfer, default expense. parent_name: optional, for level-2 categories.', inputSchema: { type: 'object', properties: { name: { type: 'string' }, kind: { type: 'string', enum: ['expense', 'income', 'transfer'] }, parent_name: { type: 'string' }, icon: { type: 'string' }, ledger_id: { type: 'string' } }, required: ['name'] } },
   { name: 'update_budget', description: 'Update a budget\'s amount.', inputSchema: { type: 'object', properties: { budget_id: { type: 'string' }, amount: { type: 'number' } }, required: ['budget_id', 'amount'] } },
@@ -147,10 +147,120 @@ async function ensureMcpTag(db: D1Database, userId: string, ledgerExternalId: st
 }
 
 // AI 解析文本（对齐原版 _parse_dt）
-function parseDt(dateStr: string | null | undefined): string {
-  if (!dateStr) return nowUtc();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr + 'T00:00:00';
-  return dateStr;
+// ── 交易时间解析（对齐原版 mcp/datetime_utils.py）─────────────────────────
+// 语义：带时区偏移 → 保留瞬间转 UTC；裸时间（无偏移）→ 按 Cloud 时区当地零点解释再转
+// UTC（仅日期 = 当日 00:00）；两者都没有可用的时区 → 报错（不猜、不补 Z）。
+// 时区来源优先级：工具参数 time_zone > 环境变量（CLOUD_TIMEZONE / TZ）> system_settings.timezone_offset。
+
+/** Intl 计算的 IANA 时区在指定时刻的 UTC 偏移（分钟，东八区 = 480）。 */
+function tzOffsetMinutes(timeZone: string, at: Date = new Date()): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' })
+      .formatToParts(at)
+      .find((p) => p.type === 'timeZoneName')?.value;
+    // 形如 "GMT+08:00" / "GMT" / "GMT-05:30"
+    const m = /^GMT(?:([+-])(\d{2}):(\d{2}))?$/.exec(parts || '');
+    if (!m) return null;
+    if (!m[1]) return 0;
+    const sign = m[1] === '+' ? 1 : -1;
+    return sign * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10));
+  } catch {
+    return null;
+  }
+}
+
+/** 解析 time_zone 参数：IANA 名（Asia/Shanghai）或 UTC±H(:MM) / ±HH:MM / 纯分钟数。 */
+function parseTimeZoneArg(timeZone?: string | null): number | null {
+  if (!timeZone) return null;
+  const tz = timeZone.trim();
+  if (/^[+-]\d{1,2}(:\d{2})?$/.test(tz)) {
+    const neg = tz.startsWith('-');
+    const body = tz.replace(/^[+-]/, '');
+    const [h, m = '0'] = body.split(':');
+    const total = parseInt(h, 10) * 60 + parseInt(m, 10);
+    return neg ? -total : total;
+  }
+  if (/^UTC([+-]\d{1,2}(:\d{2})?)?$/i.test(tz)) {
+    const m = /UTC([+-]\d{1,2}(:\d{2})?)?$/i.exec(tz);
+    if (!m || !m[1]) return 0;
+    const neg = m[1].startsWith('-');
+    const body = m[1].replace(/^[+-]/, '');
+    const [hh, mm = '0'] = body.split(':');
+    const total = parseInt(hh, 10) * 60 + parseInt(mm, 10);
+    return neg ? -total : total;
+  }
+  // IANA 名：用 Intl 求当年 1 月 15 日（避开 DST 切换日的二义）
+  const jan = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 15, 12));
+  return tzOffsetMinutes(tz, jan);
+}
+
+/** 解析部署级 Cloud 时区偏移（分钟）：环境变量 CLOUD_TIMEZONE/TZ → system_settings.timezone_offset。 */
+async function resolveCloudTzOffset(
+  db: D1Database,
+  env: { CLOUD_TIMEZONE?: string; TZ?: string },
+): Promise<number | null> {
+  const fromEnv = parseTimeZoneArg(env.CLOUD_TIMEZONE ?? env.TZ ?? null);
+  if (fromEnv !== null) return fromEnv;
+  try {
+    const row = await db.prepare('SELECT value FROM system_settings WHERE key = ?')
+      .bind('timezone_offset').first<{ value: string | number }>();
+    if (row && row.value !== null && row.value !== undefined) {
+      const n = Number(row.value);
+      if (Number.isFinite(n)) return -n; // 存储为 getTimezoneOffset()（UTC+8 = -480）
+    }
+  } catch {
+    /* 读不到就用 null（届时裸时间报错，与上游「不猜」一致） */
+  }
+  return null;
+}
+
+/** 交易时间解析核心：返回 UTC ISO 字符串。导出供测试（对齐原版 datetime_utils 语义）。 */
+export async function parseTransactionDatetime(
+  db: D1Database,
+  env: { CLOUD_TIMEZONE?: string; TZ?: string },
+  value?: string | null,
+  timeZoneArg?: string | null,
+): Promise<string> {
+  if (!value) return nowUtc();
+  // 带时区偏移（Z 或 ±HH:MM）→ 保留瞬间
+  if (/[Tt ]\d{2}:\d{2}(:\d{2})?([+-]\d{2}:?\d{2}|Z)$/.test(value.trim()) || value.trim().endsWith('Z')) {
+    const ts = Date.parse(value);
+    if (Number.isNaN(ts)) throw new Error(`Invalid happened_at: "${value}"`);
+    return new Date(ts).toISOString();
+  }
+  // 裸时间 → 需要时区
+  const tzOffset = parseTimeZoneArg(timeZoneArg ?? null) ?? (await resolveCloudTzOffset(db, env));
+  if (tzOffset === null) {
+    throw new Error('happened_at without timezone requires a time_zone argument (e.g. "Asia/Shanghai" or "UTC+8") or a server timezone setting');
+  }
+  const s = value.trim();
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const dt = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(:(\d{2}))?$/.exec(s);
+  if (!dateOnly && !dt) throw new Error(`Invalid happened_at: "${value}"`);
+  let y: number, mo: number, d: number, h = 0, mi = 0, sec = 0;
+  if (dt) {
+    [y, mo, d, h, mi] = [Number(dt[1]), Number(dt[2]), Number(dt[3]), Number(dt[4]), Number(dt[5])];
+    if (dt[7]) sec = Number(dt[7]);
+  } else {
+    [y, mo, d] = [Number(s.slice(0, 4)), Number(s.slice(5, 7)), Number(s.slice(8, 10))];
+  }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 60) {
+    throw new Error(`Invalid happened_at: "${value}"`);
+  }
+  // 当地时间减去偏移得到 UTC
+  const utc = Date.UTC(y, mo - 1, d, h, mi, sec) - tzOffset * 60000;
+  return new Date(utc).toISOString();
+}
+
+/** 按名称解析分类/账户，重名返回 ambiguous（对齐原版 write_tools lookup）。 */
+async function lookupUnique<T>(db: D1Database, query: string, params: unknown[], label: string): Promise<T> {
+  const rows = await db.prepare(query).bind(...params).all<T>();
+  const uniq = new Map<string, T>();
+  for (const r of rows.results) uniq.set((r as any).sync_id, r);
+  const list = [...uniq.values()];
+  if (list.length === 0) throw new Error(`${label} not found`);
+  if (list.length > 1) throw new Error(`Ambiguous ${label}: multiple match "${params[0]}" — use the exact name`);
+  return list[0];
 }
 
 function extractJson(text: string): any {
@@ -181,29 +291,28 @@ export async function selfCall(method: string, path: string, env: { JWT_SECRET: 
 // 返回 ({ok:true, tx}) 或 ({ok:false, status}) —— status 是给 LLM 看的结构化信号。
 async function createTxViaWriteRouter(
   db: D1Database,
-  env: { JWT_SECRET: string },
+  env: { JWT_SECRET: string; CLOUD_TIMEZONE?: string; TZ?: string },
   baseUrl: string,
   userId: string,
-  args: { amount: number; tx_type?: string; category?: string; account?: string; happened_at?: string; note?: string | null; tags?: string[] | null; currency?: string | null; ledger_id?: string | null },
+  args: { amount: number; tx_type?: string; category?: string; account?: string; happened_at?: string; note?: string | null; tags?: string[] | null; currency?: string | null; ledger_id?: string | null; time_zone?: string | null },
 ): Promise<{ ok: true; tx: any } | { ok: false; status: any }> {
   const { ledger: led, status: ledgerStatus } = await resolveWriteLedger(db, userId, args.ledger_id);
   if (ledgerStatus) return { ok: false, status: ledgerStatus };
   if (!led) throw new Error('No ledger found');
   const txAmount = args.amount;
-  if (!txAmount || txAmount <= 0) throw new Error('amount must be positive');
+  if (typeof txAmount !== 'number' || !Number.isFinite(txAmount) || txAmount <= 0) throw new Error('amount must be a positive finite number');
   const txType = args.tx_type || 'expense';
   if (!['expense', 'income', 'transfer'].includes(txType)) throw new Error(`Invalid tx_type: ${txType}`);
   if (args.category) {
-    const cat = await db.prepare('SELECT sync_id FROM user_category_projection WHERE user_id = ? AND name = ? AND kind = ?').bind(userId, args.category, txType).first<any>();
-    if (!cat) throw new Error(`Category "${args.category}" not found for type "${txType}"`);
+    await lookupUnique(db, 'SELECT sync_id FROM user_category_projection WHERE user_id = ? AND name = ? AND kind = ?', [userId, args.category, txType], `Category "${args.category}" (${txType})`);
   }
   if (args.account) {
-    const acc = await db.prepare('SELECT sync_id FROM user_account_projection WHERE user_id = ? AND name = ?').bind(userId, args.account).first<any>();
-    if (!acc) throw new Error(`Account "${args.account}" not found`);
+    await lookupUnique(db, 'SELECT sync_id FROM user_account_projection WHERE user_id = ? AND name = ?', [userId, args.account], `Account "${args.account}"`);
   }
   await ensureMcpTag(db, userId, led.external_id);
   const finalTags = mergeDefaultTag(args.tags);
-  const body: any = { base_change_id: 0, tx_type: txType, amount: txAmount, happened_at: parseDt(args.happened_at), note: args.note || null, tags: finalTags };
+  const happenedAt = await parseTransactionDatetime(db, env, args.happened_at, args.time_zone);
+  const body: any = { base_change_id: 0, tx_type: txType, amount: txAmount, happened_at: happenedAt, note: args.note || null, tags: finalTags };
   if (args.category) { body.category_name = args.category; body.category_kind = txType; }
   if (args.account) {
     if (txType === 'transfer') body.from_account_name = args.account;
@@ -219,11 +328,11 @@ async function createTxViaWriteRouter(
   const result = await selfCall('POST', `/api/v1/write/ledgers/${led.external_id}/transactions`, env, baseUrl, userId, body);
   return {
     ok: true,
-    tx: { sync_id: result.entity_id, ledger: led.name, tx_type: txType, amount: txAmount, happened_at: parseDt(args.happened_at), category: args.category || null, account: args.account || null, _meta: result },
+    tx: { sync_id: result.entity_id, ledger: led.name, tx_type: txType, amount: txAmount, happened_at: happenedAt, category: args.category || null, account: args.account || null, _meta: result },
   };
 }
 
-async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: string, userId: string, scopes: string[], name: string, args: Record<string, unknown>, patId: string, patPrefix: string, patName: string): Promise<{ content: { type: string; text: string }[] }> {
+async function execTool(db: D1Database, env: { JWT_SECRET: string; CLOUD_TIMEZONE?: string; TZ?: string }, baseUrl: string, userId: string, scopes: string[], name: string, args: Record<string, unknown>, patId: string, patPrefix: string, patName: string): Promise<{ content: { type: string; text: string }[] }> {
   const t = Date.now();
   const isWrite = ['create_transaction', 'update_transaction', 'delete_transaction', 'create_category', 'update_budget', 'create_transactions', 'parse_and_create_from_text'].includes(name);
   if (isWrite && !scopes.includes('mcp:write')) throw new Error('PAT missing required scope: mcp:write');
@@ -263,7 +372,7 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
         const total = (await db.prepare(q.replace('SELECT *', 'SELECT COUNT(*) as cnt')).bind(...p).first<{ cnt: number }>())?.cnt || 0;
         q += ' ORDER BY happened_at DESC LIMIT ?'; p.push(limit);
         const rows = await db.prepare(q).bind(...p).all();
-        r = { ledger: led.name, total, items: rows.results.map((x: any) => ({ sync_id: x.sync_id, tx_type: x.tx_type, amount: Number(x.amount || 0), happened_at: x.happened_at, note: x.note, category_name: x.category_name, account_name: x.account_name, from_account_name: x.from_account_name, to_account_name: x.to_account_name, tags: x.tags_csv || '' })) };
+        r = { ledger: led.name, total, items: rows.results.map((x: any) => ({ sync_id: x.sync_id, tx_type: x.tx_type, amount: Number(x.amount || 0), happened_at: x.happened_at, note: x.note, category_name: x.category_name, category_id: x.category_sync_id || null, account_name: x.account_name, account_id: x.account_sync_id || null, from_account_name: x.from_account_name, from_account_id: x.from_account_sync_id || null, to_account_name: x.to_account_name, to_account_id: x.to_account_sync_id || null, tags: x.tags_csv || '' })) };
         break;
       }
       case 'get_transaction': {
@@ -271,7 +380,7 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
         const tx = await db.prepare(`SELECT * FROM read_tx_projection WHERE user_id = ? AND sync_id = ?`).bind(userId, args.sync_id).first<any>();
         if (!tx) { r = null; break; }
         const l = await db.prepare('SELECT name FROM ledgers WHERE id = ?').bind(tx.ledger_id).first<{ name: string }>();
-        r = { sync_id: tx.sync_id, tx_type: tx.tx_type, amount: Number(tx.amount || 0), happened_at: tx.happened_at, note: tx.note, category_name: tx.category_name, account_name: tx.account_name, from_account_name: tx.from_account_name, to_account_name: tx.to_account_name, tags: tx.tags_csv || '', ledger: l?.name || null, attachments: tx.attachments_json ? JSON.parse(tx.attachments_json) : [] };
+        r = { sync_id: tx.sync_id, tx_type: tx.tx_type, amount: Number(tx.amount || 0), happened_at: tx.happened_at, note: tx.note, category_name: tx.category_name, category_id: tx.category_sync_id || null, account_name: tx.account_name, account_id: tx.account_sync_id || null, from_account_name: tx.from_account_name, from_account_id: tx.from_account_sync_id || null, to_account_name: tx.to_account_name, to_account_id: tx.to_account_sync_id || null, tags: tx.tags_csv || '', ledger: l?.name || null, attachments: tx.attachments_json ? JSON.parse(tx.attachments_json) : [] };
         break;
       }
       case 'create_transaction': {
@@ -285,6 +394,7 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
           tags: args.tags as string[] | null | undefined,
           currency: (args.currency as string) || null,
           ledger_id: args.ledger_id as string | null | undefined,
+          time_zone: args.time_zone as string | null | undefined,
         });
         if (!created.ok) { r = created.status; break; }
         r = created.tx;
@@ -293,7 +403,7 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
       case 'update_transaction': {
         if (!args.sync_id) throw new Error('sync_id required');
         const txAmount = args.amount as number | undefined;
-        if (txAmount !== undefined && txAmount <= 0) throw new Error('amount must be positive');
+        if (txAmount !== undefined && (typeof txAmount !== 'number' || !Number.isFinite(txAmount) || txAmount <= 0)) throw new Error('amount must be a positive finite number');
         if (args.tx_type && !['expense', 'income', 'transfer'].includes(args.tx_type as string)) throw new Error(`Invalid tx_type: ${args.tx_type}`);
         const tx = await db.prepare(`SELECT * FROM read_tx_projection WHERE user_id = ? AND sync_id = ?`).bind(userId, args.sync_id).first<any>();
         if (!tx) throw new Error('Transaction not found');
@@ -301,17 +411,15 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
         if (!led) throw new Error('Ledger not found');
         const effectiveTxType = (args.tx_type as string) || tx.tx_type;
         if (args.category) {
-          const cat = await db.prepare('SELECT sync_id FROM user_category_projection WHERE user_id = ? AND name = ? AND kind = ?').bind(userId, args.category, effectiveTxType).first<any>();
-          if (!cat) throw new Error(`Category "${args.category}" not found for type "${effectiveTxType}"`);
+          await lookupUnique(db, 'SELECT sync_id FROM user_category_projection WHERE user_id = ? AND name = ? AND kind = ?', [userId, args.category, effectiveTxType], `Category "${args.category}" (${effectiveTxType})`);
         }
         if (args.account) {
-          const acc = await db.prepare('SELECT sync_id FROM user_account_projection WHERE user_id = ? AND name = ?').bind(userId, args.account).first<any>();
-          if (!acc) throw new Error(`Account "${args.account}" not found`);
+          await lookupUnique(db, 'SELECT sync_id FROM user_account_projection WHERE user_id = ? AND name = ?', [userId, args.account], `Account "${args.account}"`);
         }
         const body: any = { base_change_id: 0 };
         if (txAmount !== undefined) body.amount = txAmount;
         if (args.tx_type) body.tx_type = args.tx_type;
-        if (args.happened_at) body.happened_at = parseDt(args.happened_at as string);
+        if (args.happened_at !== undefined) body.happened_at = await parseTransactionDatetime(db, env, args.happened_at as string, args.time_zone as string | null | undefined);
         if (args.note !== undefined) body.note = args.note;
         if (args.tags !== undefined) body.tags = mergeDefaultTag(args.tags as string[] | null);
         if (args.category !== undefined) { body.category_name = args.category; body.category_kind = effectiveTxType; }
@@ -424,10 +532,19 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
       case 'search': {
         const q = args.q as string; if (!q?.trim()) { r = []; break; }
         const limit = Math.max(1, Math.min((args.limit as number) || 20, 100));
-        const like = `%${q}%`;
-        // 对齐原版 search 工具：备注 / 分类名 / 账户名 三字段模糊搜（read_tools.py）
-        const rows = await db.prepare('SELECT * FROM read_tx_projection WHERE user_id = ? AND (note LIKE ? OR category_name LIKE ? OR account_name LIKE ?) ORDER BY happened_at DESC LIMIT ?').bind(userId, like, like, like, limit).all();
-        r = (rows.results as any[]).map(x => ({ sync_id: x.sync_id, tx_type: x.tx_type, amount: Number(x.amount || 0), happened_at: x.happened_at, note: x.note, category_name: x.category_name, account_name: x.account_name, from_account_name: x.from_account_name, to_account_name: x.to_account_name, tags: x.tags_csv || '' }));
+        // 对齐原版 _search_condition：note/分类/账户/from/to/tags 模糊 + 按标签名搜关联交易。
+        // 用 INSTR 而非 LIKE，规避 D1 对复杂 LIKE pattern 的限制（生产实证）。
+        const p: unknown[] = [userId];
+        let conds = 'INSTR(COALESCE(note, \'\'), ?) > 0 OR INSTR(COALESCE(category_name, \'\'), ?) > 0 OR INSTR(COALESCE(account_name, \'\'), ?) > 0 OR INSTR(COALESCE(from_account_name, \'\'), ?) > 0 OR INSTR(COALESCE(to_account_name, \'\'), ?) > 0 OR INSTR(COALESCE(tags_csv, \'\'), ?) > 0';
+        for (let i = 0; i < 6; i++) p.push(q);
+        // 标签名命中的 sync_id → 匹配 tag_sync_ids_json
+        const tagRows = await db.prepare(`SELECT sync_id FROM user_tag_projection WHERE user_id = ? AND INSTR(COALESCE(name, ''), ?) > 0`).bind(userId, q).all<{ sync_id: string }>();
+        if (tagRows.results.length > 0) {
+          conds += ' OR ' + tagRows.results.map((t) => `INSTR(COALESCE(tag_sync_ids_json, ''), ?) > 0`).join(' OR ');
+          tagRows.results.forEach((t) => p.push(`"${t.sync_id}"`));
+        }
+        const rows = await db.prepare(`SELECT * FROM read_tx_projection WHERE user_id = ? AND (${conds}) ORDER BY happened_at DESC LIMIT ?`).bind(...p, limit).all();
+        r = (rows.results as any[]).map(x => ({ sync_id: x.sync_id, tx_type: x.tx_type, amount: Number(x.amount || 0), happened_at: x.happened_at, note: x.note, category_name: x.category_name, category_id: x.category_sync_id || null, account_name: x.account_name, account_id: x.account_sync_id || null, from_account_name: x.from_account_name, from_account_id: x.from_account_sync_id || null, to_account_name: x.to_account_name, to_account_id: x.to_account_sync_id || null, tags: x.tags_csv || '' }));
         break;
       }
       case 'create_category': {
@@ -459,6 +576,21 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
         const txs = args.transactions as any[];
         if (!txs?.length) throw new Error('transactions array required');
         if (txs.length > 200) throw new Error('Max 200 transactions per call');
+        const txTimeZone = args.time_zone as string | null | undefined;
+        // 逐项先做契约校验（对齐原版 schemas.BatchTransactionItem：金额正有限、拒 bool、拒多余键）
+        const ITEM_KEYS = new Set(['amount', 'tx_type', 'category', 'account', 'happened_at', 'note', 'tags', 'currency']);
+        txs.forEach((tx: any, i: number) => {
+          if (typeof tx !== 'object' || tx === null) throw new Error(`Invalid transactions[${i}]: item must be an object`);
+          for (const k of Object.keys(tx)) {
+            if (!ITEM_KEYS.has(k)) throw new Error(`Invalid transactions[${i}]: unexpected key "${k}"`);
+          }
+          const amt = tx.amount;
+          if (typeof amt === 'boolean' || typeof amt !== 'number' || !Number.isFinite(amt) || amt <= 0) {
+            throw new Error(`Invalid transactions[${i}]: amount must be a positive finite number`);
+          }
+          const txType = tx.tx_type || 'expense';
+          if (!['expense', 'income', 'transfer'].includes(txType)) throw new Error(`Invalid transactions[${i}]: tx_type must be expense|income|transfer`);
+        });
         const { ledger: led, status: ledgerStatus } = await resolveWriteLedger(db, userId, args.ledger_id as string);
         if (ledgerStatus) { r = ledgerStatus; break; }
         if (!led) throw new Error('No ledger found');
@@ -471,12 +603,24 @@ async function execTool(db: D1Database, env: { JWT_SECRET: string }, baseUrl: st
           const accRows = await db.prepare(`SELECT name, currency FROM user_account_projection WHERE user_id = ? AND name IN (${placeholders})`).bind(userId, ...accNames).all();
           for (const a of (accRows.results as any[])) accCcyMap[a.name] = (a.currency || '');
         }
-        const batchTxs: any[] = [];
-        for (const tx of txs) {
-          if (tx.amount === undefined || (tx.amount as number) <= 0) throw new Error('amount must be positive');
+        // 名称 → id 预校验（重名报 ambiguous，对齐原版 write_tools 一致性）
+        for (let i = 0; i < txs.length; i++) {
+          const tx = txs[i];
           const txType = tx.tx_type || 'expense';
-          if (!['expense', 'income', 'transfer'].includes(txType)) throw new Error(`Invalid tx_type: ${txType}`);
-          const item: any = { base_change_id: 0, tx_type: txType, amount: tx.amount, happened_at: parseDt(tx.happened_at as string), note: tx.note || null, tags: mergeDefaultTag(tx.tags as string[] | null | undefined) };
+          if (tx.category) {
+            await lookupUnique(db, 'SELECT sync_id FROM user_category_projection WHERE user_id = ? AND name = ? AND kind = ?', [userId, tx.category, txType], `Category "${tx.category}" (${txType})`).catch((e) => { throw new Error(`Invalid transactions[${i}]: ${(e as Error).message}`); });
+          }
+          if (tx.account) {
+            await lookupUnique(db, 'SELECT sync_id FROM user_account_projection WHERE user_id = ? AND name = ?', [userId, tx.account], `Account "${tx.account}"`).catch((e) => { throw new Error(`Invalid transactions[${i}]: ${(e as Error).message}`); });
+          }
+        }
+        const batchTxs: any[] = [];
+        for (let i = 0; i < txs.length; i++) {
+          const tx = txs[i];
+          const txType = tx.tx_type || 'expense';
+          const happenedAt = await parseTransactionDatetime(db, env, tx.happened_at as string | null | undefined, txTimeZone)
+            .catch((e) => { throw new Error(`Invalid transactions[${i}]: ${(e as Error).message}`); });
+          const item: any = { base_change_id: 0, tx_type: txType, amount: tx.amount, happened_at: happenedAt, note: tx.note || null, tags: mergeDefaultTag(tx.tags as string[] | null | undefined) };
           if (tx.category) { item.category_name = tx.category; item.category_kind = txType; }
           if (tx.account) {
             if (txType === 'transfer') item.from_account_name = tx.account;
