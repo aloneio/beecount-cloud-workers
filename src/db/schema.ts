@@ -183,7 +183,9 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_user_time ON audit_logs(user_id, created_at DESC)').run();
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)').run();
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)').run();
-    await db.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id)').run();
+    // 注：idx_audit_logs_entity(entity_type, entity_id) 曾建于 audit_logs，
+    // v3 迁移已删除该表 entity_type/entity_id 列（见下方迁移 DROP INDEX），
+    // 全新库再执行会 no such column 导致整个初始化中断——已移除。
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_ledger ON audit_logs(ledger_id)').run();
 
     await db.prepare(`
