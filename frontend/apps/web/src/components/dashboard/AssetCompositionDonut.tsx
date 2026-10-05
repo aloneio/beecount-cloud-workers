@@ -1,16 +1,14 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
-import type { ExchangeRateOverride, ExchangeRatesResponse, WorkspaceAccount } from '@beecount/api-client'
+import type { WorkspaceAccount } from '@beecount/api-client'
 import { Card, CardContent, CardHeader, CardTitle, useLocale, useT } from '@beecount/ui'
-import { accountBalance, effectiveRateToBase } from '@beecount/web-features'
+import { convertTypeTotalsToBase } from '@beecount/web-features'
+import { useMemo } from 'react'
 
+import { usePrimaryCurrencyRates } from '../../hooks/usePrimaryCurrencyRates'
 import { formatCompactTick } from '../../i18n/format'
 
 interface Props {
   accounts: WorkspaceAccount[]
-  currency: string
-  rates: ExchangeRatesResponse | null
-  rateOverrides: ExchangeRateOverride[]
-  loading?: boolean
 }
 
 // 与 AccountsPanel 里的 TRADABLE / VALUATION 分组 + 颜色一致。
@@ -29,30 +27,21 @@ const TYPE_META: Record<string, { color: string; group: 'asset' | 'liability' }>
   loan: { color: '#dc2626', group: 'liability' }
 }
 
-export function AssetCompositionDonut({ accounts, currency, rates, rateOverrides, loading = false }: Props) {
+export function AssetCompositionDonut({ accounts }: Props) {
   const t = useT()
   const { locale } = useLocale()
   const chinese = locale.startsWith('zh')
-  const base = currency.toUpperCase()
-  // 切账本时绝不复用另一 base 的自动汇率。override 自带 base/quote,由共享函数匹配。
-  const auto = rates?.base.toUpperCase() === base ? rates : null
-  const missing = new Set<string>()
-  // 按类型**带符号**累加(与 assetAggregation 的负债符号口径一致:欠款为负、
-  // 溢缴为正,透支资产为负),饼图分段才对类型合计取 abs 当体量 —— 绝不逐账户
-  // abs,否则同类型内正负互抵的账户会被虚增。
-  const totals = new Map<string, number>()
-  for (const a of accounts) {
-    const key = a.account_type || 'other'
-    const quote = (a.currency || 'CNY').toUpperCase()
-    const effective = effectiveRateToBase(quote, base, auto, rateOverrides)
-    if (!effective) {
-      missing.add(quote)
-      continue // 缺失汇率必须显式提示,绝不将外币余额按 1:1 混入。
-    }
-    // balance 保持账户原币;仅图表展示折到账本本位币,不改账户余额/交易快照。
-    const converted = accountBalance(a) * effective.rate
-    totals.set(key, (totals.get(key) || 0) + converted)
-  }
+  // 跨币种折算(#104):账户是工作区全局的,可能混着 CNY/USD/SGD。旧实现直接把
+  // 各账户 balance 按 1:1 裸加($1000 当 ¥1000,issue #104 的 11,500 就是这么来的)。
+  // 现在统一走 assetAggregation 铁律:按币种切分 → 每币种类型小计 × 汇率折进
+  // 主币种 → 缺失汇率的整币种剔除(missing 出脚注),绝不按 1 折入。
+  // 单币种用户折算率恒 1,数字与旧实现完全一致,零视觉变化。
+  const { effectiveBase, singleCurrency, needsBase, rates, rateOverrides, loading } =
+    usePrimaryCurrencyRates(accounts)
+  const { totals, missing } = useMemo(
+    () => convertTypeTotalsToBase(accounts, effectiveBase, rates, rateOverrides),
+    [accounts, effectiveBase, rates, rateOverrides],
+  )
   const allRows = Array.from(totals.entries())
     .map(([type, signed]) => ({
       type,
@@ -86,15 +75,22 @@ export function AssetCompositionDonut({ accounts, currency, rates, rateOverrides
   return (
     <Card className="bc-panel overflow-hidden">
       <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base">{t('home.assetComp.title')}</CardTitle>
-          <span className="text-xs text-muted-foreground">{base}</span>
-        </div>
+        <CardTitle className="text-base">{t('home.assetComp.title')}</CardTitle>
       </CardHeader>
       <CardContent>
-        {loading ? (
-          <div role="status" className="flex h-48 items-center justify-center text-xs text-muted-foreground">
-            {t('common.loading')}
+        {accounts.length === 0 ? (
+          <div className="flex h-48 items-center justify-center text-xs text-muted-foreground">
+            {t('home.assetComp.empty')}
+          </div>
+        ) : loading ? (
+          <div className="flex h-48 items-center justify-center text-xs text-muted-foreground">
+            {t('home.assetComp.loading')}
+          </div>
+        ) : needsBase ? (
+          // 多币种但未设主币种:与资产页汇总卡同款引导,绝不猜币种按 1 折算。
+          <div className="flex h-48 flex-col items-center justify-center gap-1 px-6 text-center">
+            <p className="text-sm font-medium">{t('accounts.needBaseCurrency.title')}</p>
+            <p className="text-xs text-muted-foreground">{t('accounts.needBaseCurrency.desc')}</p>
           </div>
         ) : data.length === 0 ? (
           <div className="flex h-48 items-center justify-center text-xs text-muted-foreground">
@@ -132,7 +128,16 @@ export function AssetCompositionDonut({ accounts, currency, rates, rateOverrides
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('home.assetComp.totalAsset')}</div>
-                <div className="text-sm font-bold">{fmt(totalAsset)}</div>
+                {/* 多币种折算视图:与资产页汇总卡同款 ≈ 前缀 + 目标币种码。 */}
+                <div className="flex items-baseline gap-0.5">
+                  {!singleCurrency ? (
+                    <span className="font-mono text-[10px] text-muted-foreground">≈</span>
+                  ) : null}
+                  <div className="text-sm font-bold">{fmt(totalAsset)}</div>
+                  {!singleCurrency ? (
+                    <span className="text-[10px] text-muted-foreground">{effectiveBase}</span>
+                  ) : null}
+                </div>
                 {totalLiability > 0 ? (
                   <div className="mt-0.5 text-[10px] text-rose-500">{t('home.assetComp.liability').replace('{value}', fmt(totalLiability))}</div>
                 ) : null}
@@ -156,9 +161,10 @@ export function AssetCompositionDonut({ accounts, currency, rates, rateOverrides
             </ul>
           </div>
         )}
-        {!loading && missing.size > 0 ? (
-          <p role="status" className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-            {t('accounts.converted.missing', { currencies: [...missing].sort().join(', ') })}
+        {/* 缺失汇率的币种被剔除而非 1:1 折入,必须告知用户少了哪些(与资产页同口径)。 */}
+        {!singleCurrency && !needsBase && missing.length > 0 ? (
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            {t('accounts.converted.missing', { currencies: missing.join(' / ') })}
           </p>
         ) : null}
       </CardContent>

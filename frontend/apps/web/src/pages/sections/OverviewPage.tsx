@@ -2,15 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import {
-  fetchExchangeRateOverrides,
-  fetchExchangeRates,
   fetchWorkspaceAccounts,
   fetchWorkspaceAnalytics,
   fetchWorkspaceCategories,
   fetchWorkspaceLedgerCounts,
   fetchWorkspaceTags,
-  type ExchangeRateOverride,
-  type ExchangeRatesResponse,
   type ReadBudget,
   type WorkspaceAccount,
   type WorkspaceAnalytics,
@@ -39,7 +35,7 @@ import { dispatchOpenDetailCategory } from '../../lib/txDialogEvents'
 export function OverviewPage() {
   const navigate = useNavigate()
   const { token } = useAuth()
-  const { activeLedgerId, currentLedger, currency } = useLedgers()
+  const { activeLedgerId, currentLedger } = useLedgers()
 
   // Overview 的所有数据按当前账本分桶 —— 切账本时读对应桶,没命中显示空
   // 态后台 refetch。accounts / tags 实体本身是 user-global,但首页 Top 卡片
@@ -47,33 +43,6 @@ export function OverviewPage() {
   // 缓存也按账本分桶。资产页/标签页要跨账本时另外不带 ledgerId 拉。
   const bucket = activeLedgerId || '__none__'
   const [accounts, setAccounts] = usePageCache<WorkspaceAccount[]>(`overview:${bucket}:accounts`, [])
-  // Overview 按当前账本展示;账户余额仍为原币,构成图统一折到账本币种。
-  // 即使只有一种外币账户,也必须加载汇率,不能仅判断币种数量 >= 2。
-  const assetCurrency = currency.toUpperCase()
-  const needsAssetRates = accounts.some(
-    (account) => (account.currency || 'CNY').toUpperCase() !== assetCurrency,
-  )
-  const [assetRates, setAssetRates] = useState<{
-    base: string
-    rates: ExchangeRatesResponse | null
-    overrides: ExchangeRateOverride[]
-  } | null>(null)
-  const [assetRatesRefresh, setAssetRatesRefresh] = useState(0)
-  const currentAssetRates = assetRates?.base === assetCurrency ? assetRates : null
-
-  useEffect(() => {
-    if (!needsAssetRates) return
-    let cancelled = false
-    void Promise.all([
-      fetchExchangeRates(token, assetCurrency).catch(() => null),
-      fetchExchangeRateOverrides(token).catch(() => [] as ExchangeRateOverride[]),
-    ]).then(([rates, overrides]) => {
-      if (!cancelled) setAssetRates({ base: assetCurrency, rates, overrides })
-    })
-    // 换账本/币种或卸载后忽略旧请求,避免慢响应把新币种汇率覆盖。
-    return () => { cancelled = true }
-  }, [token, assetCurrency, needsAssetRates, assetRatesRefresh])
-
   const [tags, setTags] = usePageCache<WorkspaceTag[]>(`overview:${bucket}:tags`, [])
   // 当前账本下的全部分类(用于把 TopCategoriesList 里的 category_name 反查
   // 成完整 WorkspaceCategory,从而打开富统计详情弹窗)。activeLedgerId 变了
@@ -276,7 +245,6 @@ export function OverviewPage() {
     void loadAccountsAndTags()
     void loadBudgets()
     void loadCategories()
-    setAssetRatesRefresh((value) => value + 1)
   })
 
   // 把 Top 卡片里只有 name 的点击事件反查成 WorkspaceCategory 后弹详情;
@@ -327,9 +295,6 @@ export function OverviewPage() {
   return (
     <OverviewSection
       accounts={accounts}
-      assetRates={currentAssetRates?.rates ?? null}
-      assetRateOverrides={currentAssetRates?.overrides ?? []}
-      assetRatesLoading={needsAssetRates && !currentAssetRates}
       tags={tags}
       currentMonthSummary={currentMonthSummary}
       currentMonthSeries={currentMonthSeries}
