@@ -21,6 +21,7 @@ import { buildExistingSets, computeStats } from '../services/import_data/stats';
 import type { ImportFieldMapping, ImportData, ImportTransaction } from '../services/import_data/schema';
 import { makeDefaultMapping, isMappingComplete } from '../services/import_data/schema';
 import { serverLogger } from '../lib/logger';
+import { normalizeTransactionAccounts } from '../lib/transaction-normalization';
 
 function nowUtc(): string { return new Date().toISOString(); }
 
@@ -562,6 +563,15 @@ importRouter.post('/:token/execute', async (c) => {
             const happenedAt = (tx.happenedAt || now).slice(0, 10);
             const allTags = [...new Set([...tx.tagNames, ...autoTagNames])];
             const tagsCsv = allTags.length ? allTags.join(',') : null;
+            // 与原版 transaction_normalization 对齐：按交易类型清空无效账户列
+            const txAccountCols = normalizeTransactionAccounts(tx.txType, {
+              account_sync_id: tx.accountId ?? null,
+              account_name: tx.accountName ?? null,
+              from_account_sync_id: tx.fromAccountId ?? null,
+              from_account_name: tx.fromAccountName ?? null,
+              to_account_sync_id: tx.toAccountId ?? null,
+              to_account_name: tx.toAccountName ?? null,
+            });
 
             // sync_changes + projection 同事务原子写入
             const batchResults = await db.batch([
@@ -591,9 +601,9 @@ importRouter.post('/:token/execute', async (c) => {
                 tx.txType, tx.amount, happenedAt,
                 tx.note ?? null,
                 tx.categoryId ?? null, tx.categoryName ?? null, tx.categoryKind ?? null,
-                tx.accountId ?? null, tx.accountName ?? null,
-                tx.fromAccountId ?? null, tx.fromAccountName ?? null,
-                tx.toAccountId ?? null, tx.toAccountName ?? null,
+                txAccountCols.account_sync_id, txAccountCols.account_name,
+                txAccountCols.from_account_sync_id, txAccountCols.from_account_name,
+                txAccountCols.to_account_sync_id, txAccountCols.to_account_name,
                 tagsCsv, tx.tagIds ? JSON.stringify(tx.tagIds) : null,
                 0,
                 tx.excludeFromStats != null ? (tx.excludeFromStats ? 1 : 0) : null,

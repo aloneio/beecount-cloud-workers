@@ -18,6 +18,7 @@
 
 import { Hono } from 'hono';
 import { serverLogger } from '../lib/logger';
+import { normalizeTransactionAccounts, type TxAccountColumns } from '../lib/transaction-normalization';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
@@ -1997,6 +1998,10 @@ async function applyChangeToProjection(
             txMerged.native_amount = oldNative / oldAmount * newAmount;
           }
         }
+
+        // 与原版 transaction_normalization 对齐：按交易类型清空无效账户列，
+        // 防 partial merge 恢复旧转账关联（新建与合并都经过）。
+        normalizeTransactionAccounts(txMerged.tx_type as string, txMerged as TxAccountColumns);
 
         await db
           .prepare(

@@ -19,6 +19,7 @@
 
 import { Hono } from 'hono';
 import { serverLogger } from '../lib/logger';
+import { normalizeTransactionAccounts, type TxAccountColumns } from '../lib/transaction-normalization';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
@@ -1023,6 +1024,8 @@ adminRouter.post('/backups/restore', zValidator('json', BackupRestoreSchema), as
         .bind(targetLedger.id, syncId)
         .run();
 
+      const txAcc = normalizeTransactionAccounts(txRecord.tx_type as string, txRecord as unknown as TxAccountColumns);
+
       await db
         .prepare(
           `INSERT OR REPLACE INTO read_tx_projection
@@ -1041,9 +1044,9 @@ adminRouter.post('/backups/restore', zValidator('json', BackupRestoreSchema), as
           targetLedger.id, syncId, userId,
           txRecord.tx_type, txRecord.amount, txRecord.happened_at, txRecord.note ?? null,
           txRecord.category_sync_id ?? null, txRecord.category_name ?? null, txRecord.category_kind ?? null,
-          txRecord.account_sync_id ?? null, txRecord.account_name ?? null,
-          txRecord.from_account_sync_id ?? null, txRecord.from_account_name ?? null,
-          txRecord.to_account_sync_id ?? null, txRecord.to_account_name ?? null,
+          txAcc.account_sync_id, txAcc.account_name,
+          txAcc.from_account_sync_id, txAcc.from_account_name,
+          txAcc.to_account_sync_id, txAcc.to_account_name,
           txRecord.tags_csv ?? null, txRecord.tag_sync_ids_json ?? null, txRecord.attachments_json ?? null,
           txRecord.tx_index ?? 0, txRecord.source_change_id ?? 0,
           txRecord.exclude_from_stats != null ? (txRecord.exclude_from_stats ? 1 : 0) : null,

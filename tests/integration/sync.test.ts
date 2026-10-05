@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestEnv, registerTestUser, getAuthToken, createTestLedger, TEST_JWT_SECRET, TEST_DEVICE_ID } from '../helpers/test-env';
+import { getTable } from '../helpers/mock-db';
 
 let env: Awaited<ReturnType<typeof createTestEnv>>;
 let token: string;
@@ -274,5 +275,85 @@ describe('Sync - Full sync', () => {
     // ledgerSyncId 在 payload.content（JSON 字符串）内
     const content = JSON.parse(body.snapshot.payload.content);
     expect(content.ledgerSyncId).toBe(ledgerId);
+  });
+});
+
+describe('Sync - Push 交易账户字段规范化（对齐原版 transaction_normalization）', () => {
+  it('expense 带转账字段 → 投影 from/to 被清空', async () => {
+    const txSyncId = crypto.randomUUID();
+    const res = await env.app.request('/api/v1/sync/push', {
+      method: 'POST',
+      headers: pushHeaders(),
+      body: JSON.stringify({
+        device_id: TEST_DEVICE_ID,
+        changes: [
+          {
+            ledger_id: ledgerId,
+            entity_type: 'transaction',
+            entity_sync_id: txSyncId,
+            action: 'upsert',
+            payload: {
+              tx_type: 'expense',
+              amount: 10,
+              happened_at: '2025-01-15T10:00:00.000Z',
+              accountName: '现金',
+              fromAccountId: 'from-1',
+              fromAccountName: '旧转账A',
+              toAccountId: 'to-1',
+              toAccountName: '旧转账B',
+            },
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const rows = getTable(env.db, 'read_tx_projection') as any[];
+    const row = rows.find((r) => r.sync_id === txSyncId);
+    expect(row).toBeTruthy();
+    expect(row.tx_type).toBe('expense');
+    expect(row.account_name).toBe('现金');
+    expect(row.from_account_sync_id).toBeNull();
+    expect(row.from_account_name).toBeNull();
+    expect(row.to_account_sync_id).toBeNull();
+    expect(row.to_account_name).toBeNull();
+  });
+
+  it('transfer 带单账户字段 → 投影 account 被清空（只用 from/to）', async () => {
+    const txSyncId = crypto.randomUUID();
+    const res = await env.app.request('/api/v1/sync/push', {
+      method: 'POST',
+      headers: pushHeaders(),
+      body: JSON.stringify({
+        device_id: TEST_DEVICE_ID,
+        changes: [
+          {
+            ledger_id: ledgerId,
+            entity_type: 'transaction',
+            entity_sync_id: txSyncId,
+            action: 'upsert',
+            payload: {
+              tx_type: 'transfer',
+              amount: 10,
+              happened_at: '2025-01-15T10:00:00.000Z',
+              accountId: 'acc-1',
+              accountName: '现金',
+              fromAccountId: 'from-1',
+              toAccountId: 'to-1',
+            },
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const rows = getTable(env.db, 'read_tx_projection') as any[];
+    const row = rows.find((r) => r.sync_id === txSyncId);
+    expect(row).toBeTruthy();
+    expect(row.tx_type).toBe('transfer');
+    expect(row.account_sync_id).toBeNull();
+    expect(row.account_name).toBeNull();
+    expect(row.from_account_sync_id).toBe('from-1');
+    expect(row.to_account_sync_id).toBe('to-1');
   });
 });

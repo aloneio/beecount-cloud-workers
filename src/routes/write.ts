@@ -27,6 +27,8 @@
  */
 
 import { Hono } from 'hono';
+
+import { normalizeTransactionAccounts } from '../lib/transaction-normalization';
 import { serverLogger } from '../lib/logger';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
@@ -802,6 +804,18 @@ writeRouter.post('/ledgers/:ledgerId/transactions', zValidator('json', WriteTran
     }
   }
 
+  // 与原版 transaction_normalization 对齐：按交易类型清空无效账户列
+  // （transfer 只用 from/to；expense/income 只用一个账户），防 partial merge
+  // 恢复旧转账关联。
+  const txAccountCols = normalizeTransactionAccounts(req.tx_type, {
+    account_sync_id: req.account_id ?? null,
+    account_name: req.account_name ?? null,
+    from_account_sync_id: req.from_account_id ?? null,
+    from_account_name: req.from_account_name ?? null,
+    to_account_sync_id: req.to_account_id ?? null,
+    to_account_name: req.to_account_name ?? null,
+  });
+
   // sync_changes + projection 同事务原子写入（db.batch = SQL transaction，
     // 任一失败整批回滚，无需手动回删 sync_changes）
     const batchResults = await db.batch([
@@ -826,9 +840,9 @@ writeRouter.post('/ledgers/:ledgerId/transactions', zValidator('json', WriteTran
       ).bind(
         ledger.id, syncId, userId, req.tx_type, req.amount, happenedAt,
         req.note ?? null, req.category_id ?? null, req.category_name ?? null, req.category_kind ?? null,
-        req.account_id ?? null, req.account_name ?? null,
-        req.from_account_id ?? null, req.from_account_name ?? null,
-        req.to_account_id ?? null, req.to_account_name ?? null,
+        txAccountCols.account_sync_id, txAccountCols.account_name,
+        txAccountCols.from_account_sync_id, txAccountCols.from_account_name,
+        txAccountCols.to_account_sync_id, txAccountCols.to_account_name,
         resolvedTagsCsv, req.tag_ids ? safeJsonStringify(req.tag_ids) : null,
         req.attachments ? safeJsonStringify(req.attachments) : null, 0,
         req.exclude_from_stats != null ? (req.exclude_from_stats ? 1 : 0) : null,

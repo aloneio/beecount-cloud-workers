@@ -20,6 +20,8 @@
  */
 
 import { Hono } from 'hono';
+
+import { normalizeTransactionAccounts } from '../lib/transaction-normalization';
 import { serverLogger } from '../lib/logger';
 import { z } from 'zod';
 
@@ -384,7 +386,20 @@ async function ensureTxProjectionSynced(db: D1Database, userId: string): Promise
     for (const change of changes.results) {
       try {
         const payload = JSON.parse(change.payload_json);
-        
+
+        // 与原版 transaction_normalization 对齐：重建投影同口径清空无效账户列
+        const txAccountCols = normalizeTransactionAccounts(
+          payload.tx_type ?? payload.txType ?? payload.type,
+          {
+            account_sync_id: payload.account_sync_id ?? payload.accountId ?? null,
+            account_name: payload.account_name ?? payload.accountName ?? null,
+            from_account_sync_id: payload.from_account_sync_id ?? payload.fromAccountId ?? null,
+            from_account_name: payload.from_account_name ?? payload.fromAccountName ?? null,
+            to_account_sync_id: payload.to_account_sync_id ?? payload.toAccountId ?? null,
+            to_account_name: payload.to_account_name ?? payload.toAccountName ?? null,
+          },
+        );
+
         await db
           .prepare(
             `INSERT OR REPLACE INTO read_tx_projection
@@ -410,12 +425,12 @@ async function ensureTxProjectionSynced(db: D1Database, userId: string): Promise
             payload.category_sync_id ?? payload.categoryId ?? null,
             payload.category_name ?? payload.categoryName ?? null,
             payload.category_kind ?? payload.categoryKind ?? null,
-            payload.account_sync_id ?? payload.accountId ?? null,
-            payload.account_name ?? payload.accountName ?? null,
-            payload.from_account_sync_id ?? payload.fromAccountId ?? null,
-            payload.from_account_name ?? payload.fromAccountName ?? null,
-            payload.to_account_sync_id ?? payload.toAccountId ?? null,
-            payload.to_account_name ?? payload.toAccountName ?? null,
+            txAccountCols.account_sync_id,
+            txAccountCols.account_name,
+            txAccountCols.from_account_sync_id,
+            txAccountCols.from_account_name,
+            txAccountCols.to_account_sync_id,
+            txAccountCols.to_account_name,
             payload.tags ? (Array.isArray(payload.tags) ? payload.tags.join(',') : String(payload.tags)) : null,
             payload.tag_sync_ids ?? payload.tagIds ? JSON.stringify(payload.tag_sync_ids ?? payload.tagIds) : null,
             payload.attachments ? JSON.stringify(payload.attachments) : null,
