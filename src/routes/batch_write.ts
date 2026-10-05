@@ -234,6 +234,18 @@ batchWriteRouter.post('/transactions/batch', zValidator('json', BatchTransaction
       if (acc) accountSyncId = acc.sync_id;
     }
 
+    // 与原版 transaction_normalization 对齐：按交易类型清空无效账户字段
+    // （transfer 只用 from/to；expense/income 只用一个账户），防 partial merge
+    // 恢复旧转账关联——投影与同步 payload 同口径。
+    const txAccountCols = normalizeTransactionAccounts(txType, {
+      account_sync_id: accountSyncId,
+      account_name: tx.account_name ?? null,
+      from_account_sync_id: tx.from_account_id ?? null,
+      from_account_name: tx.from_account_name ?? null,
+      to_account_sync_id: tx.to_account_id ?? null,
+      to_account_name: tx.to_account_name ?? null,
+    });
+
     const payload: Record<string, unknown> = {
       syncId: txSyncId,
       type: txType,
@@ -241,9 +253,9 @@ batchWriteRouter.post('/transactions/batch', zValidator('json', BatchTransaction
       happenedAt: tx.happened_at,
       note: tx.note || null,
       categoryId: categorySyncId,
-      accountId: accountSyncId,
-      fromAccountId: tx.from_account_id || null,
-      toAccountId: tx.to_account_id || null,
+      accountId: txAccountCols.account_sync_id,
+      fromAccountId: txAccountCols.from_account_sync_id,
+      toAccountId: txAccountCols.to_account_sync_id,
       tags: tx.tags || null,
       tagIds: tx.tag_ids || null,
       attachments: mergeSharedAttachment(tx.attachments, sharedAttachment),
@@ -271,9 +283,9 @@ batchWriteRouter.post('/transactions/batch', zValidator('json', BatchTransaction
           ?, ?, ?, ?, ?, ?)`)
         .bind(ledger.id, txSyncId, userId, txType, tx.amount, tx.happened_at, tx.note || null,
           categorySyncId, tx.category_name || null, tx.category_kind || null,
-          accountSyncId, tx.account_name || null,
-          tx.from_account_id || null, tx.from_account_name || null,
-          tx.to_account_id || null, tx.to_account_name || null,
+          txAccountCols.account_sync_id, txAccountCols.account_name,
+          txAccountCols.from_account_sync_id, txAccountCols.from_account_name,
+          txAccountCols.to_account_sync_id, txAccountCols.to_account_name,
           tx.tags ? (Array.isArray(tx.tags) ? tx.tags.join(',') : String(tx.tags)) : null,
           tx.tag_ids ? safeJsonStringify(tx.tag_ids) : null,
           mergeSharedAttachment(tx.attachments, sharedAttachment) ? safeJsonStringify(mergeSharedAttachment(tx.attachments, sharedAttachment)) : null,
