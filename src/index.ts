@@ -153,6 +153,11 @@ app.get('/api/v1/version', (c) =>
   c.json({ name: APP_NAME, version: APP_VERSION })
 );
 
+// 公开 Web 展示开关（与原版 /web-config 对齐）：仅暴露合作入口等开关，不泄漏实例配置。
+app.get('/api/v1/web-config', (c) =>
+  c.json({ project_partnerships_enabled: false })
+);
+
 // 头像下载公开访问（与原版一致）
 app.get('/api/v1/profile/avatar/:userId', async (c) => {
   const userId = c.req.param('userId');
