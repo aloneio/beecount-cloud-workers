@@ -14,8 +14,6 @@
 
 import { Hono } from 'hono';
 
-import { normalizeTransactionAccounts } from '../lib/transaction-normalization';
-import { serverLogger } from '../lib/logger';
 
 function nowUtc(): string {
   return new Date().toISOString();
@@ -98,115 +96,6 @@ summaryRouter.get('/', async (c) => {
   });
 });
 
-/**
- * GET /read/summary/workspace/ledger-counts - 获取账本统计（年度报告使用）
- */
-async function ensureTxProjectionSynced(db: D1Database, userId: string): Promise<void> {
-  const sample = await db
-    .prepare('SELECT COUNT(*) as cnt FROM read_tx_projection WHERE user_id = ?')
-    .bind(userId)
-    .first<{ cnt: number }>();
-  
-  if (sample && sample.cnt > 0) return;
-  
-  serverLogger.info('app', '[SUMMARY] read_tx_projection is empty, syncing from sync_changes...');
-  
-  const ledgers = await db
-    .prepare('SELECT id, external_id FROM ledgers WHERE user_id = ?')
-    .bind(userId)
-    .all<{ id: string; external_id: string }>();
-  
-  for (const ledger of ledgers.results) {
-    const changes = await db
-      .prepare(
-        `SELECT change_id, entity_type, entity_sync_id, action, payload_json, user_id, updated_at, updated_by_user_id
-         FROM sync_changes 
-         WHERE (ledger_id = ? OR ledger_id = ?) AND entity_type = 'transaction' AND action != 'delete'
-         ORDER BY change_id ASC`
-      )
-      .bind(ledger.id, ledger.external_id)
-      .all<{
-        change_id: number;
-        entity_type: string;
-        entity_sync_id: string;
-        action: string;
-        payload_json: string;
-        user_id: string;
-        updated_at: string;
-        updated_by_user_id: string | null;
-      }>();
-    
-    for (const change of changes.results) {
-      try {
-        const payload = JSON.parse(change.payload_json);
-
-        // 与原版 transaction_normalization 对齐：重建投影同口径清空无效账户列
-        const txAccountCols = normalizeTransactionAccounts(
-          payload.tx_type ?? payload.txType ?? payload.type,
-          {
-            account_sync_id: payload.account_sync_id ?? payload.accountId ?? null,
-            account_name: payload.account_name ?? payload.accountName ?? null,
-            from_account_sync_id: payload.from_account_sync_id ?? payload.fromAccountId ?? null,
-            from_account_name: payload.from_account_name ?? payload.fromAccountName ?? null,
-            to_account_sync_id: payload.to_account_sync_id ?? payload.toAccountId ?? null,
-            to_account_name: payload.to_account_name ?? payload.toAccountName ?? null,
-          },
-        );
-
-        await db
-          .prepare(
-            `INSERT OR REPLACE INTO read_tx_projection
-             (ledger_id, sync_id, user_id, tx_type, amount, happened_at, note,
-              category_sync_id, category_name, category_kind,
-              account_sync_id, account_name,
-              from_account_sync_id, from_account_name,
-              to_account_sync_id, to_account_name,
-              tags_csv, tag_sync_ids_json, attachments_json, tx_index, source_change_id,
-              created_by_user_id, last_edited_by_user_id,
-              exclude_from_stats, exclude_from_budget,
-              currency_code, native_amount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .bind(
-            ledger.id,
-            change.entity_sync_id,
-            change.user_id,
-            payload.tx_type || 'expense',
-            payload.amount || 0,
-            payload.happened_at || payload.happenedAt || change.updated_at,
-            payload.note || null,
-            payload.category_sync_id ?? payload.categoryId ?? null,
-            payload.category_name ?? payload.categoryName ?? null,
-            payload.category_kind ?? payload.categoryKind ?? null,
-            txAccountCols.account_sync_id,
-            txAccountCols.account_name,
-            txAccountCols.from_account_sync_id,
-            txAccountCols.from_account_name,
-            txAccountCols.to_account_sync_id,
-            txAccountCols.to_account_name,
-            payload.tags ? (Array.isArray(payload.tags) ? payload.tags.join(',') : String(payload.tags)) : null,
-            payload.tag_sync_ids ?? payload.tagIds ? JSON.stringify(payload.tag_sync_ids ?? payload.tagIds) : null,
-            payload.attachments ? JSON.stringify(payload.attachments) : null,
-            payload.tx_index ?? 0,
-            change.change_id,
-            change.updated_by_user_id ?? null,
-            change.updated_by_user_id ?? null,
-            payload.excludeFromStats != null ? (payload.excludeFromStats ? 1 : 0) : null,
-            payload.excludeFromBudget != null ? (payload.excludeFromBudget ? 1 : 0) : null,
-            payload.currency_code ?? payload.currencyCode ?? null,
-            payload.native_amount ?? payload.nativeAmount ?? null,
-          )
-          .run();
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        serverLogger.error('app', `[SUMMARY] Error syncing transaction ${change.entity_sync_id}: ${errorMsg}`);
-        console.error('[SUMMARY] Full error:', err);
-      }
-    }
-  }
-  
-  serverLogger.info('app', '[SUMMARY] Sync completed');
-}
 
 // GET /read/summary/workspace/ledger-counts - 获取账本统计
 summaryRouter.get('/workspace/ledger-counts', async (c) => {
