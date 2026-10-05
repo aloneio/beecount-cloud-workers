@@ -91,4 +91,27 @@ describe('batchWriteRouter 交易账户字段规范化（真实 SQLite）', () =
     expect(payload.fromAccountId).toBeNull();
     expect(payload.toAccountId).toBeNull();
   });
+
+  it('带 ledger 路径版本（/ledgers/:ledgerId/transactions/batch）同样规范化', async () => {
+    const res = await app.request('/api/v1/write/ledgers/ledger-1/transactions/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-ID': 'dev-1' },
+      body: JSON.stringify({ device_id: 'dev-1', transactions: [{
+        tx_type: 'expense', amount: 8, happened_at: '2025-01-15T10:00:00Z',
+        from_account_id: 'from-1', from_account_name: '旧A',
+        to_account_id: 'to-1', to_account_name: '旧B',
+      }] }),
+    }, { DB: db });
+    const json = await res.json() as { created_sync_ids?: string[]; error?: string };
+    expect(res.status).toBe(200);
+    expect(json.created_sync_ids).toBeDefined();
+
+    const rows = sqlite.prepare('SELECT tx_type, from_account_sync_id, from_account_name, to_account_sync_id, to_account_name FROM read_tx_projection').all() as Record<string, unknown>[];
+    expect(rows.length).toBe(1);
+    expect(rows[0].tx_type).toBe('expense');
+    expect(rows[0].from_account_sync_id).toBeNull();
+    expect(rows[0].from_account_name).toBeNull();
+    expect(rows[0].to_account_sync_id).toBeNull();
+    expect(rows[0].to_account_name).toBeNull();
+  });
 });
