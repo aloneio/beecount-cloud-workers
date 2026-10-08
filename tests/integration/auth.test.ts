@@ -162,6 +162,36 @@ describe('Auth - Token access', () => {
     });
     expect(res.status).toBe(401);
   });
+
+
+  it('should reject a refresh token used as an access token', async () => {
+    await registerTestUser(env.app, 'refresh-as-access@example.com');
+    const { body } = await loginTestUser(env.app, 'refresh-as-access@example.com');
+    const res = await env.app.request('/api/v1/sync/ledgers', {
+      headers: { Authorization: `Bearer ${body.refresh_token}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('should reject a TOTP challenge token used as an access token', async () => {
+    const userId = 'totp-user';
+    const challenge = await createAccessToken(userId, TEST_JWT_SECRET, [], 300, 'totp_challenge');
+    const res = await env.app.request('/api/v1/sync/ledgers', {
+      headers: { Authorization: `Bearer ${challenge}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+
+  it('should reject an existing access token after the user is disabled', async () => {
+    await registerTestUser(env.app, 'disabled-live-token@example.com');
+    const { body } = await loginTestUser(env.app, 'disabled-live-token@example.com');
+    await env.db.prepare('UPDATE users SET is_enabled = ? WHERE id = ?').bind(0, body.user.id).run();
+    const res = await env.app.request('/api/v1/sync/ledgers', {
+      headers: { Authorization: `Bearer ${body.access_token}` },
+    });
+    expect(res.status).toBe(401);
+  });
 });
 
 describe('Auth - Refresh token', () => {

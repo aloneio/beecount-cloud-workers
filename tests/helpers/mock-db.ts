@@ -181,6 +181,28 @@ class InMemoryDB {
   }
 
   private handleInsertSelect(sql: string, table: Row[], params: unknown[]): MockResult {
+    // Shared-ledger invite claim: INSERT ... SELECT from ledger_invites.
+    // The production statement intentionally couples membership creation to the
+    // successful invite claim in the same D1 batch. Model that semantic directly
+    // instead of teaching the generic mini-SQL parser every correlated predicate.
+    if (/INSERT\s+INTO\s+ledger_members/i.test(sql) && /FROM\s+ledger_invites\s+li/i.test(sql)) {
+      const [userId, joinedAt, code, usedBy, usedAt, memberUserId] = params;
+      const invites = this.getTable('ledger_invites');
+      const invite = invites.find(r => r.code === code && r.used_by === usedBy && r.used_at === usedAt);
+      if (!invite) return { success: true, meta: { last_row_id: 0, changes: 0 }, results: [] };
+      if (table.some(r => r.ledger_id === invite.ledger_id && r.user_id === memberUserId)) {
+        return { success: true, meta: { last_row_id: 0, changes: 0 }, results: [] };
+      }
+      table.push({
+        ledger_id: invite.ledger_id,
+        user_id: userId,
+        role: invite.target_role,
+        invited_by: invite.invited_by,
+        joined_at: joinedAt,
+      });
+      return { success: true, meta: { last_row_id: 0, changes: 1 }, results: [] };
+    }
+
     const colsMatch = sql.match(/\(([^)]+)\)\s+SELECT/i);
     if (!colsMatch) return { success: false, meta: { last_row_id: 0, changes: 0 }, results: [] };
     const columns = colsMatch[1].split(',').map(c => c.trim());
@@ -284,6 +306,22 @@ class InMemoryDB {
   }
 
   private handleUpdate(sql: string, params: unknown[]): MockResult {
+    // Shared-ledger invite claim with transactional member-cap guard.
+    if (/UPDATE\s+ledger_invites/i.test(sql) && /COUNT\(\*\)\s+FROM\s+ledger_members/i.test(sql)) {
+      const [usedAt, usedBy, code, ledgerId, now, countLedgerId] = params;
+      const invites = this.getTable('ledger_invites');
+      const members = this.getTable('ledger_members');
+      const row = invites.find(r =>
+        r.code === code && r.ledger_id === ledgerId && (r.used_at === null || r.used_at === undefined) &&
+        String(r.expires_at ?? '') > String(now ?? '') &&
+        members.filter(m => m.ledger_id === countLedgerId).length < 5
+      );
+      if (!row) return { success: true, meta: { last_row_id: 0, changes: 0 }, results: [] };
+      row.used_at = usedAt;
+      row.used_by = usedBy;
+      return { success: true, meta: { last_row_id: 0, changes: 1 }, results: [] };
+    }
+
     const tableMatch = sql.match(/UPDATE\s+(\w+)/i);
     if (!tableMatch) return { success: false, meta: { last_row_id: 0, changes: 0 }, results: [] };
 

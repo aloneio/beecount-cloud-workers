@@ -76,6 +76,11 @@ export function createTestApp(db: D1Database, jwtSecret: string = 'test-secret-k
     if (!('userId' in validationResult)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    const activeUser = await db.prepare('SELECT id, is_enabled FROM users WHERE id = ?')
+      .bind(validationResult.userId).first<{ id: string; is_enabled: number }>();
+    if (!activeUser || !activeUser.is_enabled) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
 
     c.set('userId', validationResult.userId);
     c.set('deviceId', c.req.header('X-Device-ID') || null);

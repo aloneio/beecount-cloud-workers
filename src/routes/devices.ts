@@ -1,3 +1,4 @@
+import { boundedInt } from '../lib/query-params';
 /**
  * 设备路由模块 - 实现 BeeCount Cloud 设备管理接口
  *
@@ -82,7 +83,7 @@ devicesRouter.get('/', async (c) => {
   const userId = c.get('userId');
   const db = c.env.DB;
   const view = c.req.query('view') ?? 'deduped';
-  const activeWithinDays = parseInt(c.req.query('active_within_days') ?? '30', 10);
+  const activeWithinDays = boundedInt(c.req.query('active_within_days'), 30, 0, 3650);
 
   // 计算活跃时间窗口（0 表示不过滤，与原版对齐）
   const cutoff = activeWithinDays > 0 ? new Date(Date.now() - activeWithinDays * 24 * 60 * 60 * 1000).toISOString() : null;
@@ -191,8 +192,10 @@ devicesRouter.post('/:id/revoke', async (c) => {
     return c.json({ error: 'Device not found' }, 404);
   }
 
-  await db.prepare('UPDATE devices SET revoked_at = ? WHERE id = ?').bind(serverNow, deviceId).run();
-  await db.prepare('UPDATE refresh_tokens SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL').bind(serverNow, deviceId).run();
+  await db.batch([
+    db.prepare('UPDATE devices SET revoked_at = ? WHERE id = ? AND user_id = ?').bind(serverNow, deviceId, userId),
+    db.prepare('UPDATE refresh_tokens SET revoked_at = ? WHERE device_id = ? AND user_id = ? AND revoked_at IS NULL').bind(serverNow, deviceId, userId),
+  ]);
 
   return c.json({ ok: true, device_id: deviceId });
 });

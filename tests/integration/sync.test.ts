@@ -128,6 +128,8 @@ describe('Sync - Push', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.accepted).toBe(1);
+    const stored = getTable(env.db, 'sync_changes').find((row: any) => row.entity_type === 'category' && row.entity_sync_id === catSyncId);
+    expect(stored).toMatchObject({ scope: 'user', ledger_id: null });
   });
 
   it('should push an account', async () => {
@@ -158,6 +160,8 @@ describe('Sync - Push', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.accepted).toBe(1);
+    const stored = getTable(env.db, 'sync_changes').find((row: any) => row.entity_type === 'account' && row.entity_sync_id === acctSyncId);
+    expect(stored).toMatchObject({ scope: 'user', ledger_id: null });
   });
 });
 

@@ -45,8 +45,8 @@ wsRouter.get('/', async (c) => {
     // 与原版对齐：检查用户是否存在
     const userId = validationResult.userId;
     const db = c.env.DB;
-    const user = await db.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first<{ id: string }>();
-    if (!user) {
+    const user = await db.prepare('SELECT id, is_enabled FROM users WHERE id = ?').bind(userId).first<{ id: string; is_enabled: number }>();
+    if (!user?.is_enabled) {
       return c.json({ error: 'User not found' }, 401);
     }
 

@@ -1,3 +1,4 @@
+import { boundedInt } from '../lib/query-params';
 /**
  * MCP 调用日志路由模块 - 实现 MCP 工具调用历史查询接口
  *
@@ -53,8 +54,8 @@ mcpCallsRouter.get('/', async (c) => {
   const startAt = c.req.query('start_at') ?? null;
   const endAt = c.req.query('end_at') ?? null;
   const patId = c.req.query('pat_id') ?? null;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = boundedInt(c.req.query('limit'), 50, 1, 200);
+  const offset = boundedInt(c.req.query('offset'), 0, 0, 1_000_000);
 
   // 构建查询
   const conditions: string[] = ['user_id = ?'];

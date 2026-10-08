@@ -1,3 +1,5 @@
+import { csvField, sanitizeCsvFilename } from '../lib/csv';
+import { boundedInt, finiteNumber } from '../lib/query-params';
 /**
  * Workspace 路由模块 - 实现跨账本聚合查询接口 + 共享账本管理
  *
@@ -31,6 +33,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { insertAuditLog } from '../lib/audit';
+import { isRateLimitedDistributed } from '../lib/rate-limit';
 
 // ===========================
 // 辅助函数
@@ -213,7 +216,7 @@ workspaceRouter.get('/transactions.csv', async (c) => {
   if (!ledgerId) {
     return c.json({ error: 'ledger_id is required' }, 400);
   }
-  const tzOffsetMinutes = parseInt(c.req.query('tz_offset_minutes') ?? '0', 10);
+  const tzOffsetMinutes = boundedInt(c.req.query('tz_offset_minutes'), 0, -840, 840);
   const tzMs = tzOffsetMinutes * 60 * 1000;
 
   const ledger = await db
@@ -237,8 +240,8 @@ workspaceRouter.get('/transactions.csv', async (c) => {
   const accountSyncId = c.req.query('account_sync_id');
   const categorySyncId = c.req.query('category_sync_id');
   const tagSyncId = c.req.query('tag_sync_id');
-  const amountMin = c.req.query('amount_min') ? Number(c.req.query('amount_min')) : null;
-  const amountMax = c.req.query('amount_max') ? Number(c.req.query('amount_max')) : null;
+  const amountMin = finiteNumber(c.req.query('amount_min'));
+  const amountMax = finiteNumber(c.req.query('amount_max'));
 
   if (txType) {
     txQuery += ' AND tx_type = ?';
@@ -297,15 +300,6 @@ workspaceRouter.get('/transactions.csv', async (c) => {
 
   const txRows = await db.prepare(txQuery).bind(...params).all<Record<string, unknown>>();
 
-  function escapeCsvField(field: string | number | null): string {
-    if (field === null || field === undefined) return '';
-    const str = String(field);
-    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-      return '"' + str.replace(/"/g, '""') + '"';
-    }
-    return str;
-  }
-
   const header = ['日期', '时间', '类型', '金额', '币种', '账户', '分类', '标签', '备注'];
   const rows = [header.join(',')];
 
@@ -324,12 +318,12 @@ workspaceRouter.get('/transactions.csv', async (c) => {
     const note = String(tx.note ?? '');
 
     rows.push(
-      [date, time, txTypeVal, amount, currency, account, category, tags, note].map(escapeCsvField).join(',')
+      [date, time, txTypeVal, amount, currency, account, category, tags, note].map(csvField).join(',')
     );
   }
 
   const csvContent = '\uFEFF' + rows.join('\r\n');
-  const fileName = `${ledger.name || ledgerId}_transactions_${new Date().toISOString().slice(0, 10)}.csv`;
+  const fileName = `${sanitizeCsvFilename(ledger.name || ledgerId)}_transactions_${new Date().toISOString().slice(0, 10)}.csv`;
 
   return new Response(csvContent, {
     status: 200,
@@ -350,8 +344,8 @@ workspaceRouter.get('/accounts', async (c) => {
   const ledgerId = c.req.query('ledger_id') ?? null;
   const filterUserId = c.req.query('user_id') ?? null;
   const q = c.req.query('q') ?? null;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = boundedInt(c.req.query('limit'), 500, 1, 5000);
+  const offset = boundedInt(c.req.query('offset'), 0, 0, 1_000_000);
 
   // 含共享账本
   let ledgerQuery = `SELECT DISTINCT l.id, l.external_id, l.name FROM ledgers l
@@ -460,8 +454,8 @@ workspaceRouter.get('/categories', async (c) => {
   const ledgerId = c.req.query('ledger_id') ?? null;
   const filterUserId = c.req.query('user_id') ?? null;
   const q = c.req.query('q') ?? null;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = boundedInt(c.req.query('limit'), 500, 1, 5000);
+  const offset = boundedInt(c.req.query('offset'), 0, 0, 1_000_000);
 
   // 含共享账本
   let ledgerQuery = `SELECT DISTINCT l.id, l.external_id, l.name FROM ledgers l
@@ -554,8 +548,8 @@ workspaceRouter.get('/tags', async (c) => {
   const ledgerId = c.req.query('ledger_id') ?? null;
   const filterUserId = c.req.query('user_id') ?? null;
   const q = c.req.query('q') ?? null;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = boundedInt(c.req.query('limit'), 500, 1, 5000);
+  const offset = boundedInt(c.req.query('offset'), 0, 0, 1_000_000);
 
   // 含共享账本
   let ledgerQuery = `SELECT DISTINCT l.id, l.external_id, l.name FROM ledgers l
@@ -677,8 +671,8 @@ workspaceRouter.get('/budgets', async (c) => {
   const db = c.env.DB;
   const ledgerId = c.req.query('ledger_id') ?? null;
   const q = c.req.query('q') ?? null;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = boundedInt(c.req.query('limit'), 500, 1, 5000);
+  const offset = boundedInt(c.req.query('offset'), 0, 0, 1_000_000);
 
   // 含共享账本
   let ledgerQuery = `SELECT DISTINCT l.id, l.external_id, l.name FROM ledgers l
@@ -845,7 +839,7 @@ workspaceRouter.get('/analytics', async (c) => {
   const scope = c.req.query('scope') ?? 'month';
   const metric = c.req.query('metric') ?? 'expense';
   const period = c.req.query('period') ?? null;
-  const tzOffsetMinutes = parseInt(c.req.query('tz_offset_minutes') ?? '0', 10);
+  const tzOffsetMinutes = boundedInt(c.req.query('tz_offset_minutes'), 0, -840, 840);
   const naturalMonth = c.req.query('natural_month') === 'true';
 
   // 含共享账本
@@ -1162,7 +1156,7 @@ workspaceRouter.post('/ledgers/:id/invites', zValidator('json', InviteSchema), a
     details: { expires_at: expiresAt, target_role: req.target_role },
   });
 
-  const shareOrigin = (c.env as any).INVITE_SHARE_ORIGIN || c.req.header('Origin') || `https://${c.req.header('Host')}` || 'https://beecount.qzz.io';
+  const shareOrigin = c.env.INVITE_SHARE_ORIGIN || new URL(c.req.url).origin;
   const shareUrl = `${shareOrigin.replace(/\/+$/, '')}/invite/${inviteCode}`;
 
   return c.json({
@@ -1215,7 +1209,7 @@ workspaceRouter.get('/ledgers/:id/invites', async (c) => {
       created_at: string;
     }>();
 
-  const shareOrigin = (c.env as any).INVITE_SHARE_ORIGIN || c.req.header('Origin') || `https://${c.req.header('Host')}` || 'https://beecount.qzz.io';
+  const shareOrigin = c.env.INVITE_SHARE_ORIGIN || new URL(c.req.url).origin;
   const result = invites.results.map((inv) => ({
       id: inv.code, // v3 后 ledger_invites 主键是 code（原 id 列已删），响应保持 id 字段兼容
       code: inv.code,
@@ -1280,6 +1274,10 @@ workspaceRouter.post('/invites/:code/preview', async (c) => {
   const userId = c.get('userId');
   const db = c.env.DB;
   const inviteCode = c.req.param('code');
+  const clientIp = c.req.header('CF-Connecting-IP') || 'unknown';
+  if (await isRateLimitedDistributed(c.env.BEECOUNT_DO, 'invite-preview', clientIp, 60, 60)) {
+    return c.json({ error: 'Too many invite attempts. Try again later.' }, 429);
+  }
 
   const invite = await db
     .prepare(
@@ -1348,6 +1346,10 @@ workspaceRouter.post('/ledgers/join', zValidator('json', JoinSchema), async (c) 
   const userId = c.get('userId');
   const db = c.env.DB;
   const req = c.req.valid('json');
+  const clientIp = c.req.header('CF-Connecting-IP') || 'unknown';
+  if (await isRateLimitedDistributed(c.env.BEECOUNT_DO, 'invite-join', clientIp, 60, 30)) {
+    return c.json({ error: 'Too many invite attempts. Try again later.' }, 429);
+  }
 
   const invite = await db
     .prepare(
@@ -1405,26 +1407,29 @@ workspaceRouter.post('/ledgers/join', zValidator('json', JoinSchema), async (c) 
     return c.json({ error: 'Ledger has reached the maximum member limit' }, 400);
   }
 
-  // 并发保护：用 try-catch 捕获 UNIQUE 约束冲突（与原版 SELECT FOR UPDATE 对齐）
-  try {
-    await db
-      .prepare('INSERT INTO ledger_members (ledger_id, user_id, role, invited_by, joined_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(invite.ledger_id, userId, invite.target_role, invite.invited_by, new Date().toISOString())
-      .run();
-  } catch (err) {
-    if ((err as Error).message?.includes('UNIQUE')) {
-      // 已是成员（并发请求竞争），返回成功
-      const cnt = await db.prepare('SELECT COUNT(*) as cnt FROM ledger_members WHERE ledger_id = ?').bind(invite.ledger_id).first<{ cnt: number }>();
-      const li = await db.prepare('SELECT currency FROM ledgers WHERE id = ?').bind(invite.ledger_id).first<{ currency: string }>();
-      return c.json({ ledger_id: invite.external_id, ledger_name: invite.ledger_name, ledger_currency: li?.currency ?? 'CNY', role: invite.target_role, member_count: (cnt?.cnt ?? 0) });
-    }
-    throw err;
+  const claimNow = nowUtc();
+  const claimResults = await db.batch([
+    db.prepare(`UPDATE ledger_invites
+                SET used_at = ?, used_by = ?
+                WHERE code = ? AND ledger_id = ? AND used_at IS NULL AND expires_at > ?
+                  AND (SELECT COUNT(*) FROM ledger_members WHERE ledger_id = ?) < 5`)
+      .bind(claimNow, userId, invite.code, invite.ledger_id, claimNow, invite.ledger_id),
+    db.prepare(`INSERT INTO ledger_members (ledger_id, user_id, role, invited_by, joined_at)
+                SELECT li.ledger_id, ?, li.target_role, li.invited_by, ?
+                FROM ledger_invites li
+                WHERE li.code = ? AND li.used_by = ? AND li.used_at = ?
+                  AND NOT EXISTS (SELECT 1 FROM ledger_members lm WHERE lm.ledger_id = li.ledger_id AND lm.user_id = ?)`)
+      .bind(userId, claimNow, invite.code, userId, claimNow, userId),
+  ]);
+  if (claimResults[0].meta.changes === 0) {
+    const current = await db.prepare('SELECT used_at, expires_at FROM ledger_invites WHERE code = ?').bind(invite.code).first<{ used_at: string | null; expires_at: string }>();
+    if (current?.used_at) return c.json({ error: 'Invite has already been used' }, 410);
+    if (!current || new Date(current.expires_at) < new Date()) return c.json({ error: 'Invite code has expired' }, 410);
+    return c.json({ error: 'Ledger has reached the maximum member limit' }, 400);
   }
-
-  await db
-    .prepare('UPDATE ledger_invites SET used_at = ?, used_by = ? WHERE code = ?')
-    .bind(nowUtc(), userId, invite.code)
-    .run();
+  if (claimResults[1].meta.changes !== 1) {
+    throw new Error('Invite claim did not create a membership row');
+  }
 
   // 查询 member_count 和 currency（与原版对齐）
   const updatedCount = await db
@@ -1476,6 +1481,10 @@ workspaceRouter.post('/invites/:code/accept', async (c) => {
   const userId = c.get('userId');
   const db = c.env.DB;
   const inviteCode = c.req.param('code');
+  const clientIp = c.req.header('CF-Connecting-IP') || 'unknown';
+  if (await isRateLimitedDistributed(c.env.BEECOUNT_DO, 'invite-join', clientIp, 60, 30)) {
+    return c.json({ error: 'Too many invite attempts. Try again later.' }, 429);
+  }
 
   const invite = await db
     .prepare(
@@ -1523,24 +1532,29 @@ workspaceRouter.post('/invites/:code/accept', async (c) => {
     return c.json({ ledger_id: invite.external_id, ledger_name: invite.ledger_name, ledger_currency: li?.currency ?? 'CNY', role: invite.target_role, member_count: (cnt?.cnt ?? 0) });
   }
 
-  // 并发保护：try-catch 捕获 UNIQUE 约束冲突
-  try {
-    await db
-      .prepare('INSERT INTO ledger_members (ledger_id, user_id, role, invited_by, joined_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(invite.ledger_id, userId, invite.target_role, invite.invited_by, nowUtc())
-      .run();
-  } catch (err) {
-    if ((err as Error).message?.includes('UNIQUE')) {
-      const cnt = await db.prepare('SELECT COUNT(*) as cnt FROM ledger_members WHERE ledger_id = ?').bind(invite.ledger_id).first<{ cnt: number }>();
-      const li = await db.prepare('SELECT currency FROM ledgers WHERE id = ?').bind(invite.ledger_id).first<{ currency: string }>();
-      return c.json({ ledger_id: invite.external_id, ledger_name: invite.ledger_name, ledger_currency: li?.currency ?? 'CNY', role: invite.target_role, member_count: (cnt?.cnt ?? 0) });
-    }
-    throw err;
+  const claimNow = nowUtc();
+  const claimResults = await db.batch([
+    db.prepare(`UPDATE ledger_invites
+                SET used_at = ?, used_by = ?
+                WHERE code = ? AND ledger_id = ? AND used_at IS NULL AND expires_at > ?
+                  AND (SELECT COUNT(*) FROM ledger_members WHERE ledger_id = ?) < 5`)
+      .bind(claimNow, userId, invite.code, invite.ledger_id, claimNow, invite.ledger_id),
+    db.prepare(`INSERT INTO ledger_members (ledger_id, user_id, role, invited_by, joined_at)
+                SELECT li.ledger_id, ?, li.target_role, li.invited_by, ?
+                FROM ledger_invites li
+                WHERE li.code = ? AND li.used_by = ? AND li.used_at = ?
+                  AND NOT EXISTS (SELECT 1 FROM ledger_members lm WHERE lm.ledger_id = li.ledger_id AND lm.user_id = ?)`)
+      .bind(userId, claimNow, invite.code, userId, claimNow, userId),
+  ]);
+  if (claimResults[0].meta.changes === 0) {
+    const current = await db.prepare('SELECT used_at, expires_at FROM ledger_invites WHERE code = ?').bind(invite.code).first<{ used_at: string | null; expires_at: string }>();
+    if (current?.used_at) return c.json({ error: 'Invite has already been used' }, 410);
+    if (!current || new Date(current.expires_at) < new Date()) return c.json({ error: 'Invite code has expired' }, 410);
+    return c.json({ error: 'Ledger has reached the maximum member limit' }, 400);
   }
-
-  await db.prepare('UPDATE ledger_invites SET used_at = ?, used_by = ? WHERE code = ?')
-    .bind(nowUtc(), userId, invite.code)
-    .run();
+  if (claimResults[1].meta.changes !== 1) {
+    throw new Error('Invite claim did not create a membership row');
+  }
 
   const updatedCount = await db.prepare('SELECT COUNT(*) as cnt FROM ledger_members WHERE ledger_id = ?').bind(invite.ledger_id).first<{ cnt: number }>();
   const ledgerInfo = await db.prepare('SELECT currency FROM ledgers WHERE id = ?').bind(invite.ledger_id).first<{ currency: string }>();
@@ -2077,27 +2091,18 @@ workspaceRouter.post('/ledgers/:id/transfer', zValidator('json', TransferSchema)
     return c.json({ error: 'Target user is not a member of this ledger' }, 400);
   }
 
-  await db
-    .prepare('UPDATE ledgers SET user_id = ? WHERE id = ?')
-    .bind(req.target_user_id, ledger.id)
-    .run();
-
-  await db
-    .prepare('DELETE FROM ledger_members WHERE ledger_id = ? AND user_id = ?')
-    .bind(ledger.id, req.target_user_id)
-    .run();
-
-  const existingOwnerMember = await db
-    .prepare('SELECT user_id FROM ledger_members WHERE ledger_id = ? AND user_id = ?')
-    .bind(ledger.id, userId)
-    .first();
-
-  if (!existingOwnerMember) {
-    await db
-      .prepare('INSERT INTO ledger_members (ledger_id, user_id, role) VALUES (?, ?, ?)')
-      .bind(ledger.id, userId, 'editor')
-      .run();
-  }
+  // Ownership transfer is one atomic state transition. Both owner and editors
+  // remain represented in ledger_members, so member_count/listing stays coherent.
+  await db.batch([
+    db.prepare('UPDATE ledgers SET user_id = ? WHERE id = ?')
+      .bind(req.target_user_id, ledger.id),
+    db.prepare("UPDATE ledger_members SET role = 'owner' WHERE ledger_id = ? AND user_id = ?")
+      .bind(ledger.id, req.target_user_id),
+    db.prepare(`INSERT INTO ledger_members (ledger_id, user_id, role)
+                VALUES (?, ?, 'editor')
+                ON CONFLICT(ledger_id, user_id) DO UPDATE SET role = 'editor'`)
+      .bind(ledger.id, userId),
+  ]);
 
   await insertAuditLog({
     db, userId, ledgerId: ledger.id, action: 'transfer_owner', entityType: 'ledger', entityId: ledgerExternalId,
@@ -2139,7 +2144,7 @@ workspaceRouter.get('/net-worth-history', async (c) => {
   const db = c.env.DB;
   const ledgerId = c.req.query('ledger_id') ?? null;
   const filterUserId = c.req.query('user_id') ?? null;
-  const tzOffsetMinutes = parseInt(c.req.query('tz_offset_minutes') ?? '0', 10);
+  const tzOffsetMinutes = boundedInt(c.req.query('tz_offset_minutes'), 0, -840, 840);
 
   // 含共享账本
   const ledgers = await db
