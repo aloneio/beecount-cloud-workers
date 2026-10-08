@@ -185,6 +185,10 @@ export type ReadTransaction = {
   from_account_id?: string | null
   to_account_name: string | null
   to_account_id?: string | null
+  /** 账户币种快照来自当前账户投影；用于跨币种转账按两端真实币种显示。 */
+  account_currency?: string | null
+  from_account_currency?: string | null
+  to_account_currency?: string | null
   tags: string | null
   tags_list: string[]
   tag_ids?: string[]

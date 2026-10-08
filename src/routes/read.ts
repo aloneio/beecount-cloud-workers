@@ -23,6 +23,7 @@ import { Hono } from 'hono';
 
 import { normalizeTransactionAccounts } from '../lib/transaction-normalization';
 import { categorySubtreeIds, loadCategoryHierarchy } from '../lib/category-hierarchy';
+import { resolveTransactionCategory } from '../lib/transfer-category';
 import { serverLogger } from '../lib/logger';
 import { z } from 'zod';
 
@@ -111,6 +112,9 @@ interface ReadTransactionOut {
   account_id: string | null;
   from_account_id: string | null;
   to_account_id: string | null;
+  account_currency: string | null;
+  from_account_currency: string | null;
+  to_account_currency: string | null;
   tags: string | null;
   tags_list: string[];
   tag_ids: string[];
@@ -389,9 +393,16 @@ async function ensureTxProjectionSynced(db: D1Database, userId: string): Promise
       try {
         const payload = JSON.parse(change.payload_json);
 
+        const txType = payload.tx_type ?? payload.txType ?? payload.type ?? 'expense';
+        const resolvedCategory = await resolveTransactionCategory(db, userId, txType, {
+          categoryId: payload.category_sync_id ?? payload.categoryId ?? null,
+          categoryName: payload.category_name ?? payload.categoryName ?? null,
+          categoryKind: payload.category_kind ?? payload.categoryKind ?? null,
+        });
+
         // 与原版 transaction_normalization 对齐：重建投影同口径清空无效账户列
         const txAccountCols = normalizeTransactionAccounts(
-          payload.tx_type ?? payload.txType ?? payload.type,
+          txType,
           {
             account_sync_id: payload.account_sync_id ?? payload.accountId ?? null,
             account_name: payload.account_name ?? payload.accountName ?? null,
@@ -420,20 +431,20 @@ async function ensureTxProjectionSynced(db: D1Database, userId: string): Promise
             ledger.id,
             change.entity_sync_id,
             change.user_id,
-            payload.tx_type || 'expense',
+            txType,
             payload.amount || 0,
             payload.happened_at || payload.happenedAt || change.updated_at,
             payload.note || null,
-            payload.category_sync_id ?? payload.categoryId ?? null,
-            payload.category_name ?? payload.categoryName ?? null,
-            payload.category_kind ?? payload.categoryKind ?? null,
+            resolvedCategory.categoryId,
+            resolvedCategory.categoryName,
+            resolvedCategory.categoryKind,
             txAccountCols.account_sync_id,
             txAccountCols.account_name,
             txAccountCols.from_account_sync_id,
             txAccountCols.from_account_name,
             txAccountCols.to_account_sync_id,
             txAccountCols.to_account_name,
-            (payload.tx_type ?? payload.txType ?? payload.type) === 'transfer' ? (payload.transfer_to_amount ?? payload.transferToAmount ?? null) : null,
+            txType === 'transfer' ? (payload.transfer_to_amount ?? payload.transferToAmount ?? null) : null,
             payload.tags ? (Array.isArray(payload.tags) ? payload.tags.join(',') : String(payload.tags)) : null,
             payload.tag_sync_ids ?? payload.tagIds ? JSON.stringify(payload.tag_sync_ids ?? payload.tagIds) : null,
             payload.attachments ? JSON.stringify(payload.attachments) : null,
@@ -481,7 +492,15 @@ readRouter.get('/workspace/transactions', async (c) => {
 
   await ensureTxProjectionSynced(db, userId);
 
-  let query = 'SELECT rt.*, l.external_id AS ledger_external_id FROM read_tx_projection rt LEFT JOIN ledgers l ON rt.ledger_id = l.id';
+  let query = `SELECT rt.*, l.external_id AS ledger_external_id,
+    aa.currency AS account_currency,
+    fa.currency AS from_account_currency,
+    ta.currency AS to_account_currency
+    FROM read_tx_projection rt
+    LEFT JOIN ledgers l ON rt.ledger_id = l.id
+    LEFT JOIN user_account_projection aa ON aa.sync_id = rt.account_sync_id
+    LEFT JOIN user_account_projection fa ON fa.sync_id = rt.from_account_sync_id
+    LEFT JOIN user_account_projection ta ON ta.sync_id = rt.to_account_sync_id`;
   const bindings: (string | number)[] = [];
 
   if (ledgerId) {
@@ -613,6 +632,9 @@ readRouter.get('/workspace/transactions', async (c) => {
       from_account_name: row.from_account_name as string | null,
       to_account_id: (row.to_account_sync_id as string) ?? null,
       to_account_name: row.to_account_name as string | null,
+      account_currency: (row.account_currency as string) ?? null,
+      from_account_currency: (row.from_account_currency as string) ?? null,
+      to_account_currency: (row.to_account_currency as string) ?? null,
       category_id: (row.category_sync_id as string) ?? null,
       category_sync_id: row.category_sync_id as string | null,
       category_name: row.category_name as string | null,
@@ -1017,7 +1039,15 @@ readRouter.get('/ledgers/:ledgerExternalId/transactions', async (c) => {
   serverLogger.info('src.routers.read', '[READ] All transactions for ledger_id:', ledger.id, JSON.stringify(allTx.results));
 
   // 构建查询
-  let ledgerTxQuery = 'SELECT * FROM read_tx_projection WHERE ledger_id = ?';
+  let ledgerTxQuery = `SELECT rt.*,
+    aa.currency AS account_currency,
+    fa.currency AS from_account_currency,
+    ta.currency AS to_account_currency
+    FROM read_tx_projection rt
+    LEFT JOIN user_account_projection aa ON aa.sync_id = rt.account_sync_id
+    LEFT JOIN user_account_projection fa ON fa.sync_id = rt.from_account_sync_id
+    LEFT JOIN user_account_projection ta ON ta.sync_id = rt.to_account_sync_id
+    WHERE rt.ledger_id = ?`;
   const ledgerTxBindings: (string | number)[] = [ledger.id];
 
   if (txType) {
@@ -1113,6 +1143,9 @@ readRouter.get('/ledgers/:ledgerExternalId/transactions', async (c) => {
       account_id: row.account_sync_id as string | null,
       from_account_id: row.from_account_sync_id as string | null,
       to_account_id: row.to_account_sync_id as string | null,
+      account_currency: (row.account_currency as string) ?? null,
+      from_account_currency: (row.from_account_currency as string) ?? null,
+      to_account_currency: (row.to_account_currency as string) ?? null,
       tags: row.tags_csv as string | null,
       tags_list: parseTagsCsv(row.tags_csv as string | null),
       tag_ids: tagIds,

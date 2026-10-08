@@ -22,6 +22,7 @@ import type { ImportFieldMapping, ImportData, ImportTransaction } from '../servi
 import { makeDefaultMapping, isMappingComplete } from '../services/import_data/schema';
 import { serverLogger } from '../lib/logger';
 import { normalizeTransactionAccounts } from '../lib/transaction-normalization';
+import { resolveTransactionCategory } from '../lib/transfer-category';
 
 function nowUtc(): string { return new Date().toISOString(); }
 
@@ -158,7 +159,9 @@ function buildTxPayload(tx: ImportTransaction, autoTags: string[]): Record<strin
     transferToAmount: tx.txType === 'transfer' ? (tx.transferToAmount ?? null) : null,
     happenedAt: tx.happenedAt.slice(0, 10),
     note: tx.note ?? null,
+    categoryId: tx.categoryId ?? null,
     categoryName: tx.categoryName ?? null,
+    categoryKind: tx.categoryKind ?? null,
     accountName: tx.accountName ?? null,
     fromAccountName: tx.fromAccountName ?? null,
     toAccountName: tx.toAccountName ?? null,
@@ -558,6 +561,14 @@ importRouter.post('/:token/execute', async (c) => {
           }
 
           try {
+            const resolvedCategory = await resolveTransactionCategory(db, userId, tx.txType, {
+              categoryId: tx.categoryId ?? null,
+              categoryName: tx.categoryName ?? null,
+              categoryKind: tx.categoryKind ?? null,
+            });
+            tx.categoryId = resolvedCategory.categoryId;
+            tx.categoryName = resolvedCategory.categoryName;
+            tx.categoryKind = resolvedCategory.categoryKind;
             const payload = buildTxPayload(tx, autoTagNames);
             const syncId = randomUUID();
             const now = nowUtc();

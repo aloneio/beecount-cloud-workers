@@ -151,7 +151,7 @@ export function GlobalEditDialogs() {
         original_currency: (tx.currency_code || '').toUpperCase(),
         note: tx.note || '',
         category_name: tx.category_name || '',
-        category_kind: (tx.category_kind as TxForm['category_kind']) || 'expense',
+        category_kind: (tx.category_kind as TxForm['category_kind']) || tx.tx_type,
         account_name: tx.account_name || '',
         from_account_name: tx.from_account_name || '',
         to_account_name: tx.to_account_name || '',
@@ -296,12 +296,8 @@ export function GlobalEditDialogs() {
       transfer_to_amount: editTxForm.tx_type === 'transfer' ? transferToAmount : null,
       happened_at: editTxForm.happened_at,
       note: editTxForm.note.trim() || null,
-      category_name:
-        editTxForm.tx_type === 'transfer'
-          ? null
-          : editTxForm.category_name.trim() || null,
-      category_kind:
-        editTxForm.tx_type === 'transfer' ? null : editTxForm.tx_type,
+      category_name: editTxForm.category_name.trim() || null,
+      category_kind: editTxForm.category_kind || editTxForm.tx_type,
       account_name:
         editTxForm.tx_type === 'transfer'
           ? null

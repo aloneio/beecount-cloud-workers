@@ -29,6 +29,7 @@
 import { Hono } from 'hono';
 
 import { normalizeTransactionAccounts } from '../lib/transaction-normalization';
+import { resolveTransactionCategory } from '../lib/transfer-category';
 import { serverLogger } from '../lib/logger';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
@@ -764,6 +765,11 @@ writeRouter.post('/ledgers/:ledgerId/transactions', zValidator('json', WriteTran
   }
 
   const syncId = randomUUID();
+  const resolvedCategory = await resolveTransactionCategory(db, userId, req.tx_type, {
+    categoryId: req.category_id ?? null,
+    categoryName: req.category_name ?? null,
+    categoryKind: req.category_kind ?? null,
+  });
   const payload: Record<string, unknown> = {
     syncId: syncId,
     type: req.tx_type,
@@ -771,9 +777,9 @@ writeRouter.post('/ledgers/:ledgerId/transactions', zValidator('json', WriteTran
     transferToAmount: req.tx_type === 'transfer' ? (req.transfer_to_amount ?? req.transferToAmount ?? null) : null,
     happenedAt: req.happened_at ? new Date(req.happened_at as string).toISOString() : new Date().toISOString(),
     note: req.note ?? null,
-    categoryId: req.category_id ?? null,
-    categoryName: req.category_name ?? null,
-    categoryKind: req.category_kind ?? null,
+    categoryId: resolvedCategory.categoryId,
+    categoryName: resolvedCategory.categoryName,
+    categoryKind: resolvedCategory.categoryKind,
     accountId: req.account_id ?? null,
     accountName: req.account_name ?? null,
     fromAccountId: req.from_account_id ?? null,
@@ -844,7 +850,7 @@ writeRouter.post('/ledgers/:ledgerId/transactions', zValidator('json', WriteTran
          ?, ?, ?, ?, ?, ?)`
       ).bind(
         ledger.id, syncId, userId, req.tx_type, req.amount, happenedAt,
-        req.note ?? null, req.category_id ?? null, req.category_name ?? null, req.category_kind ?? null,
+        req.note ?? null, resolvedCategory.categoryId, resolvedCategory.categoryName, resolvedCategory.categoryKind,
         txAccountCols.account_sync_id, txAccountCols.account_name,
         txAccountCols.from_account_sync_id, txAccountCols.from_account_name,
         txAccountCols.to_account_sync_id, txAccountCols.to_account_name,
@@ -1326,6 +1332,17 @@ writeRouter.patch('/ledgers/:ledgerId/transactions/:id', zValidator('json', Writ
       newPayload.nativeAmount = newAmount;
     }
   }
+
+  // transfer 必须落到 transfer kind 分类；历史空分类在任意一次编辑时也会
+  // 自动收敛到用户现有的顶级「转账」分类。
+  const resolvedCategory = await resolveTransactionCategory(db, userId, newPayload.type, {
+    categoryId: nullOr(newPayload.categoryId) as string | null,
+    categoryName: nullOr(newPayload.categoryName) as string | null,
+    categoryKind: nullOr(newPayload.categoryKind) as string | null,
+  });
+  newPayload.categoryId = resolvedCategory.categoryId;
+  newPayload.categoryName = resolvedCategory.categoryName;
+  newPayload.categoryKind = resolvedCategory.categoryKind;
 
   // 更新操作者（与原版对齐）
   newPayload.updatedByUserId = userId;

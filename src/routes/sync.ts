@@ -19,6 +19,7 @@
 import { Hono } from 'hono';
 import { serverLogger } from '../lib/logger';
 import { normalizeTransactionAccounts, type TxAccountColumns } from '../lib/transaction-normalization';
+import { resolveTransactionCategory } from '../lib/transfer-category';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
@@ -635,7 +636,21 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
               .bind(ledgerRowId || '', change.entity_sync_id).first<{ created_by_user_id: string | null }>();
             p.createdByUserId = existing?.created_by_user_id || userId;
           }
+          const txType = (p.type ?? p.tx_type ?? p.txType) as string | undefined;
+          if (txType === 'transfer') {
+            const resolvedCategory = await resolveTransactionCategory(db, userId, txType, {
+              categoryId: (p.categoryId ?? p.category_id) as string | null | undefined,
+              categoryName: (p.categoryName ?? p.category_name) as string | null | undefined,
+              categoryKind: (p.categoryKind ?? p.category_kind) as string | null | undefined,
+            });
+            p.categoryId = resolvedCategory.categoryId;
+            p.categoryName = resolvedCategory.categoryName;
+            p.categoryKind = resolvedCategory.categoryKind;
+          }
           payloadForStorage = p;
+          // 后续 applyChangeToProjection 使用 change.payload；同步替换成同一个规范化 payload，
+          // 保证 sync_changes 与投影不会分叉。
+          change.payload = p;
         }
 
         const ledgerRowRef = isUserGlobal ? null : { id: ledgerRowId as string, external_id: '' };
@@ -2017,6 +2032,18 @@ async function applyChangeToProjection(
             txMerged.native_amount = oldNative / oldAmount * newAmount;
           }
         }
+
+        // transfer 是正式分类 kind。移动端历史 payload 可能没有 category；
+        // 服务端在投影落库前统一补用户的顶级 transfer 分类，避免 Web / App
+        // / MCP 三条写入路径出现不同口径。
+        const resolvedCategory = await resolveTransactionCategory(db, userId, txMerged.tx_type as string, {
+          categoryId: txMerged.category_sync_id as string | null,
+          categoryName: txMerged.category_name as string | null,
+          categoryKind: txMerged.category_kind as string | null,
+        });
+        txMerged.category_sync_id = resolvedCategory.categoryId;
+        txMerged.category_name = resolvedCategory.categoryName;
+        txMerged.category_kind = resolvedCategory.categoryKind;
 
         // 与原版 transaction_normalization 对齐：按交易类型清空无效账户列，
         // 防 partial merge 恢复旧转账关联（新建与合并都经过）。

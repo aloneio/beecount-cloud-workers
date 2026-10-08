@@ -364,6 +364,9 @@ export function TransactionsPanel({
     : true)
   const selectedTags = form.tags
   const categoryValue = form.category_name.trim()
+  const defaultTransferCategory = (categories as WorkspaceCategory[]).find(
+    (row) => row.kind === 'transfer' && Number(row.level ?? 1) === 1,
+  ) ?? (categories as WorkspaceCategory[]).find((row) => row.kind === 'transfer')
 
   const applyTxType = (nextType: TxForm['tx_type']) => {
     if (nextType === 'transfer') {
@@ -377,7 +380,7 @@ export function TransactionsPanel({
         currency: '',
         transfer_currency_mode: 'same',
         transfer_to_amount: '',
-        category_name: '',
+        category_name: defaultTransferCategory?.name || '',
         category_kind: 'transfer',
         exclude_from_stats: false,
         exclude_from_budget: false
@@ -565,39 +568,31 @@ export function TransactionsPanel({
             </div>
             <div className="space-y-1">
               <Label>{t('transactions.table.category')}</Label>
-              {isTransfer ? (
-                <Input disabled value={t('common.none')} />
-              ) : (
-                // 跟同行的 SelectTrigger 视觉对齐:h-10 + bg-muted + border-input,
-                // 图标用 h-6 w-6 圆形塞得进 40px 高度,不撑大行高。
-                <button
-                  type="button"
-                  disabled={dictionariesLoading}
-                  onClick={() => setCategoryPickerOpen(true)}
-                  className="flex h-10 w-full items-center gap-2 rounded-md border border-input bg-muted px-3 py-2 text-left text-sm shadow-sm transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {selectedCategoryRow ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15">
-                      <CategoryIcon
-                        icon={selectedCategoryRow.icon}
-                        iconType={selectedCategoryRow.icon_type}
-                        iconCloudFileId={selectedCategoryRow.icon_cloud_file_id}
-                        iconPreviewUrlByFileId={iconPreviewUrlByFileId}
-                        size={16}
-                        className="text-primary"
-                      />
-                    </span>
-                  ) : null}
-                  <span
-                    className={`flex-1 truncate ${
-                      categoryValue ? '' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {categoryValue || t('transactions.placeholder.categoryName')}
+              {/* transfer 也是正式 category kind。默认选中系统「转账」分类，
+                  用户仍可在存在多个 transfer 分类时手动切换。 */}
+              <button
+                type="button"
+                disabled={dictionariesLoading}
+                onClick={() => setCategoryPickerOpen(true)}
+                className="flex h-10 w-full items-center gap-2 rounded-md border border-input bg-muted px-3 py-2 text-left text-sm shadow-sm transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {selectedCategoryRow ? (
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15">
+                    <CategoryIcon
+                      icon={selectedCategoryRow.icon}
+                      iconType={selectedCategoryRow.icon_type}
+                      iconCloudFileId={selectedCategoryRow.icon_cloud_file_id}
+                      iconPreviewUrlByFileId={iconPreviewUrlByFileId}
+                      size={16}
+                      className="text-primary"
+                    />
                   </span>
-                  <span className="text-xs text-muted-foreground opacity-60">▾</span>
-                </button>
-              )}
+                ) : null}
+                <span className={`flex-1 truncate ${categoryValue ? '' : 'text-muted-foreground'}`}>
+                  {categoryValue || t('transactions.placeholder.categoryName')}
+                </span>
+                <span className="text-xs text-muted-foreground opacity-60">▾</span>
+              </button>
             </div>
 
             {isTransfer ? (
@@ -828,13 +823,13 @@ export function TransactionsPanel({
       />
 
       {/* 分类 picker —— 跟 mobile category_selector_dialog 同样的网格 + 子级
-          展开交互。expense / income 切换跟随 form.tx_type;转账类型不开 picker。
+          展开交互。expense / income / transfer 都跟随 form.tx_type。
           移除"未分类"footer —— 非转账交易必选分类(对齐 mobile transaction_editor_page,
           page 层 onSaveTransaction 也会再 guard 一次)。 */}
       <CategoryPickerDialog
         open={categoryPickerOpen}
         onClose={() => setCategoryPickerOpen(false)}
-        kind={form.tx_type === 'income' ? 'income' : 'expense'}
+        kind={form.tx_type}
         rows={categories as WorkspaceCategory[]}
         iconPreviewUrlByFileId={iconPreviewUrlByFileId}
         selectedId={selectedCategoryRow?.id}

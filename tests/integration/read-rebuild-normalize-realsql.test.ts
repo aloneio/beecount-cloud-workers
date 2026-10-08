@@ -19,6 +19,9 @@ beforeEach(() => {
   sqlite.prepare("INSERT INTO users (id, email, password_hash) VALUES ('user-1', 'r@x.com', 'x')").run();
   sqlite.prepare("INSERT INTO ledgers (id, user_id, external_id, name, currency) VALUES ('ledger-1', 'user-1', 'ledger-1', 'R', 'CNY')").run();
   sqlite.prepare("INSERT INTO ledger_members (ledger_id, user_id, role, joined_at) VALUES ('ledger-1', 'user-1', 'owner', '2025-01-01T00:00:00Z')").run();
+  sqlite.prepare("INSERT INTO user_category_projection (sync_id, user_id, name, kind, level) VALUES ('cat-transfer', 'user-1', '转账', 'transfer', 1)").run();
+  sqlite.prepare("INSERT INTO user_account_projection (sync_id, user_id, name, account_type, currency) VALUES ('bitget', 'user-1', 'Bitget', 'bank_card', 'USD')").run();
+  sqlite.prepare("INSERT INTO user_account_projection (sync_id, user_id, name, account_type, currency) VALUES ('wallet', 'user-1', 'BitgetWallet', 'bank_card', 'CNY')").run();
 
   app = new Hono<{ Bindings: { DB: D1Database }; Variables: { userId: string } }>();
   app.use('*', async (c, next) => {
@@ -95,6 +98,10 @@ describe('read 投影重建账户字段规范化（真实 SQLite）', () => {
       from_account_name: 'Bitget',
       to_account_id: 'wallet',
       to_account_name: 'BitgetWallet',
+      from_account_currency: 'USD',
+      to_account_currency: 'CNY',
+      category_name: '转账',
+      category_kind: 'transfer',
     });
   });
 
