@@ -27,7 +27,7 @@ import { randomUUID } from 'crypto';
 import { insertAuditLog } from '../lib/audit';
 import { deleteFromStorage } from '../lib/storage-adapter';
 
-const CODE_VERSION = 'v1.3-projection-fix';
+const CODE_VERSION = 'v1.4-full-pull-recovery';
 
 // ===========================
 // Snapshot Cache（与原版 snapshot_cache 对齐）
@@ -1143,11 +1143,11 @@ syncRouter.get('/pull', async (c) => {
       params.push(ledgerId);
     }
 
-    // 与原版对齐：过滤设备自身变更（依赖 WS 推送获取实时更新）。
-    // SQLite 三值逻辑：NULL != ? 结果为 NULL（视为 false），会把
-    // updated_by_device_id IS NULL 的变更（web 端/恢复/导入创建）误过滤掉，
-    // 导致 app 拉不到这些交易。必须显式放行 NULL。
-    if (deviceId) {
+    // 增量同步时继续过滤设备自身刚提交的变更，避免重复回声。
+    // 但 since=0 表示客户端正在做全量/恢复重建：此时必须返回完整历史。
+    // 如果仍过滤 updated_by_device_id == 当前设备，本地数据库清空后会永久漏掉
+    // 该设备过去上传的账户、分类和交易，最终造成 App 与 Web projection 不一致。
+    if (deviceId && since > 0) {
       query += ' AND (c.updated_by_device_id IS NULL OR c.updated_by_device_id != ?)';
       params.push(deviceId);
     }

@@ -200,6 +200,33 @@ describe('Sync - Pull', () => {
     expect(typeof body.has_more).toBe('boolean');
   });
 
+  it('should include same-device history when rebuilding from since=0', async () => {
+    const txSyncId = crypto.randomUUID();
+    const pushRes = await env.app.request('/api/v1/sync/push', {
+      method: 'POST',
+      headers: pushHeaders(),
+      body: JSON.stringify({
+        device_id: TEST_DEVICE_ID,
+        changes: [{
+          ledger_id: ledgerId,
+          entity_type: 'transaction',
+          entity_sync_id: txSyncId,
+          action: 'upsert',
+          payload: { tx_type: 'expense', amount: 12.34, happened_at: '2025-01-15T10:30:00.000Z', note: 'same-device rebuild' },
+          updated_at: new Date().toISOString(),
+        }],
+      }),
+    });
+    expect(pushRes.status).toBe(200);
+
+    const pullRes = await env.app.request(`/api/v1/sync/pull?device_id=${TEST_DEVICE_ID}&since=0`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(pullRes.status).toBe(200);
+    const body = await pullRes.json() as any;
+    expect(body.changes.some((c: any) => c.entity_sync_id === txSyncId)).toBe(true);
+  });
+
   it('should return empty when no new changes', async () => {
     const res = await env.app.request(`/api/v1/sync/pull?device_id=${TEST_DEVICE_ID}&since=999999999`, {
       headers: { Authorization: `Bearer ${token}` },
