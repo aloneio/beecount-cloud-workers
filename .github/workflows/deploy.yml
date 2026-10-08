@@ -13,15 +13,15 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.15.1
 
@@ -57,6 +57,13 @@ jobs:
           test -s frontend/apps/web/dist/sw.js
           VERSION=$(grep -oP "APP_VERSION = '\K[^']+" src/version.ts)
           grep -Fq "beecount-web-v3-$VERSION" frontend/apps/web/dist/sw.js
+
+      - name: Validate Cloudflare deployment secret
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::GitHub Actions secret CLOUDFLARE_API_TOKEN is not configured. Tests passed, but deployment cannot continue."
+            exit 1
+          fi
 
       - name: Setup D1 database
         id: d1
