@@ -1112,6 +1112,7 @@ const en = {
   'transactions.transfer.outAmount': 'Amount sent',
   'transactions.transfer.inAmount': 'Amount received',
   'transactions.transfer.impliedRate': 'Implied rate:',
+  'transactions.transfer.sameCurrencyHint': 'For the same currency, leave this blank to use the sent amount.',
   'transactions.error.transferToAmountInvalid': 'Enter a valid received amount for a cross-currency transfer',
   'transactions.convertedToBase': 'Converted to ledger base currency at the rate recorded at entry time',
   'transactions.error.rateMissing': 'Failed to get exchange rate; cannot convert to ledger base currency. Try again later.',

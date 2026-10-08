@@ -1154,6 +1154,7 @@ const zhCN = {
   'transactions.transfer.outAmount': '转出金额',
   'transactions.transfer.inAmount': '转入金额',
   'transactions.transfer.impliedRate': '隐含汇率：',
+  'transactions.transfer.sameCurrencyHint': '同币种可留空，留空时转入金额等于转出金额。',
   'transactions.error.transferToAmountInvalid': '跨币种转账必须填写有效的转入金额',
   'transactions.convertedToBase': '已按记账时汇率折算为账本本位币',
   'transactions.error.rateMissing': '汇率获取失败,无法折算为账本本位币,请稍后重试',

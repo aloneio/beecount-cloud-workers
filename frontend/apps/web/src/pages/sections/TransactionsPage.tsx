@@ -1430,8 +1430,9 @@ export function TransactionsPage() {
       const fromCurrency = (txWriteAccounts.find((row) => row.name.trim() === fromAccountName)?.currency || '').toUpperCase()
       const toCurrency = (txWriteAccounts.find((row) => row.name.trim() === toAccountName)?.currency || '').toUpperCase()
       const isCrossCurrencyTransfer = Boolean(isTransfer && fromCurrency && toCurrency && fromCurrency !== toCurrency)
-      const transferToAmount = isCrossCurrencyTransfer ? Number(txForm.transfer_to_amount) : null
-      if (isCrossCurrencyTransfer && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
+      const transferToAmountText = txForm.transfer_to_amount.trim()
+      const transferToAmount = transferToAmountText ? Number(transferToAmountText) : null
+      if ((isCrossCurrencyTransfer || transferToAmountText) && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
         setErrorNotice(t('transactions.error.transferToAmountInvalid'))
         return false
       }

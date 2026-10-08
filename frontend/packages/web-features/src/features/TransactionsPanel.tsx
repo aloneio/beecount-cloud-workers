@@ -343,8 +343,11 @@ export function TransactionsPanel({
   const fromCurrency = (fromAccount?.currency || '').trim().toUpperCase()
   const toCurrency = (toAccount?.currency || '').trim().toUpperCase()
   const isCrossCurrencyTransfer = Boolean(isTransfer && fromCurrency && toCurrency && fromCurrency !== toCurrency)
-  const transferToAmountNumber = Number(form.transfer_to_amount)
-  const transferToAmountValid = !isCrossCurrencyTransfer || (Number.isFinite(transferToAmountNumber) && transferToAmountNumber > 0)
+  const transferToAmountText = form.transfer_to_amount.trim()
+  const transferToAmountNumber = Number(transferToAmountText)
+  const transferToAmountValid = !transferToAmountText
+    ? !isCrossCurrencyTransfer
+    : Number.isFinite(transferToAmountNumber) && transferToAmountNumber > 0
   const transferOutAmountNumber = Number(form.amount)
   const impliedRate = isCrossCurrencyTransfer && Number.isFinite(transferOutAmountNumber) && transferOutAmountNumber > 0 && transferToAmountValid
     ? transferToAmountNumber / transferOutAmountNumber
@@ -558,7 +561,7 @@ export function TransactionsPanel({
                     <SelectContent>
                       {accountOptionsWithPinned(form.from_account_name).map((name) => (
                         <SelectItem key={name} value={name}>
-                          {name}
+                          {name}{accounts.find((row) => row.name.trim() === name)?.currency ? ` (${accounts.find((row) => row.name.trim() === name)?.currency?.toUpperCase()})` : ''}
                           {hiddenAccountNames.has(name) ? (
                             <span className="ml-1 text-xs text-muted-foreground">
                               {t('accounts.hidden.optionSuffix')}
@@ -582,7 +585,7 @@ export function TransactionsPanel({
                     <SelectContent>
                       {accountOptionsWithPinned(form.to_account_name).map((name) => (
                         <SelectItem key={name} value={name}>
-                          {name}
+                          {name}{accounts.find((row) => row.name.trim() === name)?.currency ? ` (${accounts.find((row) => row.name.trim() === name)?.currency?.toUpperCase()})` : ''}
                           {hiddenAccountNames.has(name) ? (
                             <span className="ml-1 text-xs text-muted-foreground">
                               {t('accounts.hidden.optionSuffix')}
@@ -593,22 +596,23 @@ export function TransactionsPanel({
                     </SelectContent>
                   </Select>
                 </div>
-                {isCrossCurrencyTransfer ? (
-                  <div className="space-y-1">
-                    <Label>{`${t('transactions.transfer.inAmount')} (${toCurrency})`}</Label>
+                <div className="space-y-1">
+                  <Label>{`${t('transactions.transfer.inAmount')}${toCurrency ? ` (${toCurrency})` : ''}`}</Label>
                     <Input
                       inputMode="decimal"
                       value={form.transfer_to_amount}
                       onChange={(e) => onFormChange({ ...form, transfer_to_amount: e.target.value })}
                       placeholder={t('transactions.transfer.inAmount')}
                     />
-                    {impliedRate != null ? (
-                      <p className="text-xs text-muted-foreground">
-                        {t('transactions.transfer.impliedRate')} 1 {fromCurrency} = {impliedRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} {toCurrency}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
+                  {isCrossCurrencyTransfer && impliedRate != null ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t('transactions.transfer.impliedRate')} 1 {fromCurrency} = {impliedRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} {toCurrency}
+                    </p>
+                  ) : null}
+                  {!isCrossCurrencyTransfer && fromCurrency && toCurrency ? (
+                    <p className="text-xs text-muted-foreground">{t('transactions.transfer.sameCurrencyHint')}</p>
+                  ) : null}
+                </div>
               </>
             ) : (
               <div className="space-y-1">

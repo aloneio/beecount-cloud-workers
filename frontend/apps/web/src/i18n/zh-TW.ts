@@ -1113,6 +1113,7 @@ const zhTW = {
   'transactions.transfer.outAmount': '轉出金額',
   'transactions.transfer.inAmount': '轉入金額',
   'transactions.transfer.impliedRate': '隱含匯率：',
+  'transactions.transfer.sameCurrencyHint': '同幣種可留空，留空時轉入金額等於轉出金額。',
   'transactions.error.transferToAmountInvalid': '跨幣種轉帳必須填寫有效的轉入金額',
   'transactions.convertedToBase': '已按記帳時匯率折算為帳本本位幣',
   'transactions.error.rateMissing': '匯率取得失敗,無法折算為帳本本位幣,請稍後重試',

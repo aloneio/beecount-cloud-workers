@@ -237,8 +237,9 @@ export function GlobalEditDialogs() {
     const fromCurrency = (editTxAccounts.find((a) => (a.name || '').trim() === editTxForm.from_account_name.trim())?.currency || '').toUpperCase()
     const toCurrency = (editTxAccounts.find((a) => (a.name || '').trim() === editTxForm.to_account_name.trim())?.currency || '').toUpperCase()
     const isCrossCurrencyTransfer = Boolean(editTxForm.tx_type === 'transfer' && fromCurrency && toCurrency && fromCurrency !== toCurrency)
-    const transferToAmount = isCrossCurrencyTransfer ? Number(editTxForm.transfer_to_amount) : null
-    if (isCrossCurrencyTransfer && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
+    const transferToAmountText = editTxForm.transfer_to_amount.trim()
+    const transferToAmount = transferToAmountText ? Number(transferToAmountText) : null
+    if ((isCrossCurrencyTransfer || transferToAmountText) && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
       notifyError(new Error(t('transactions.error.transferToAmountInvalid')))
       return false
     }
