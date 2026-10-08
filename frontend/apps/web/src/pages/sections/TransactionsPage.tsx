@@ -1429,10 +1429,19 @@ export function TransactionsPage() {
       const categoryKind = txForm.category_kind
       const fromCurrency = (txWriteAccounts.find((row) => row.name.trim() === fromAccountName)?.currency || '').toUpperCase()
       const toCurrency = (txWriteAccounts.find((row) => row.name.trim() === toAccountName)?.currency || '').toUpperCase()
-      const isCrossCurrencyTransfer = Boolean(isTransfer && fromCurrency && toCurrency && fromCurrency !== toCurrency)
-      const transferToAmountText = txForm.transfer_to_amount.trim()
-      const transferToAmount = transferToAmountText ? Number(transferToAmountText) : null
-      if ((isCrossCurrencyTransfer || transferToAmountText) && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
+      const isDifferentCurrencyTransfer = isTransfer && txForm.transfer_currency_mode === 'different'
+      if (isTransfer && fromCurrency && toCurrency) {
+        if (!isDifferentCurrencyTransfer && fromCurrency !== toCurrency) {
+          setErrorNotice(t('transactions.error.transferSameCurrencyRequired'))
+          return false
+        }
+        if (isDifferentCurrencyTransfer && fromCurrency === toCurrency) {
+          setErrorNotice(t('transactions.error.transferDifferentCurrencyRequired'))
+          return false
+        }
+      }
+      const transferToAmount = isDifferentCurrencyTransfer ? Number(txForm.transfer_to_amount.trim()) : null
+      if (isDifferentCurrencyTransfer && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
         setErrorNotice(t('transactions.error.transferToAmountInvalid'))
         return false
       }
@@ -1986,6 +1995,7 @@ export function TransactionsPage() {
                     editingOwnerUserId: tx.created_by_user_id || '',
                     tx_type: tx.tx_type,
                     amount: String(tx.amount),
+                    transfer_currency_mode: tx.transfer_to_amount != null ? 'different' : 'same',
                     transfer_to_amount: tx.transfer_to_amount != null ? String(tx.transfer_to_amount) : '',
                     happened_at: tx.happened_at,
                     note: tx.note || '',

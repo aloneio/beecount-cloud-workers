@@ -140,6 +140,7 @@ export function GlobalEditDialogs() {
         editingOwnerUserId: tx.created_by_user_id || '',
         tx_type: tx.tx_type,
         amount: String(tx.amount),
+        transfer_currency_mode: tx.transfer_to_amount != null ? 'different' : 'same',
         transfer_to_amount: tx.transfer_to_amount != null ? String(tx.transfer_to_amount) : '',
         happened_at: tx.happened_at,
         // v30 多币种:回显该笔币种 + 原币种(提交时币种未变不发字段,金额
@@ -236,10 +237,19 @@ export function GlobalEditDialogs() {
 
     const fromCurrency = (editTxAccounts.find((a) => (a.name || '').trim() === editTxForm.from_account_name.trim())?.currency || '').toUpperCase()
     const toCurrency = (editTxAccounts.find((a) => (a.name || '').trim() === editTxForm.to_account_name.trim())?.currency || '').toUpperCase()
-    const isCrossCurrencyTransfer = Boolean(editTxForm.tx_type === 'transfer' && fromCurrency && toCurrency && fromCurrency !== toCurrency)
-    const transferToAmountText = editTxForm.transfer_to_amount.trim()
-    const transferToAmount = transferToAmountText ? Number(transferToAmountText) : null
-    if ((isCrossCurrencyTransfer || transferToAmountText) && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
+    const isDifferentCurrencyTransfer = editTxForm.tx_type === 'transfer' && editTxForm.transfer_currency_mode === 'different'
+    if (editTxForm.tx_type === 'transfer' && fromCurrency && toCurrency) {
+      if (!isDifferentCurrencyTransfer && fromCurrency !== toCurrency) {
+        notifyError(new Error(t('transactions.error.transferSameCurrencyRequired')))
+        return false
+      }
+      if (isDifferentCurrencyTransfer && fromCurrency === toCurrency) {
+        notifyError(new Error(t('transactions.error.transferDifferentCurrencyRequired')))
+        return false
+      }
+    }
+    const transferToAmount = isDifferentCurrencyTransfer ? Number(editTxForm.transfer_to_amount.trim()) : null
+    if (isDifferentCurrencyTransfer && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
       notifyError(new Error(t('transactions.error.transferToAmountInvalid')))
       return false
     }

@@ -338,20 +338,25 @@ export function TransactionsPanel({
   }, [categories, form.category_name, form.tx_type])
 
   const isTransfer = form.tx_type === 'transfer'
+  const isDifferentCurrencyTransfer = isTransfer && form.transfer_currency_mode === 'different'
   const fromAccount = isTransfer ? accounts.find((row) => row.name.trim() === form.from_account_name.trim()) : undefined
   const toAccount = isTransfer ? accounts.find((row) => row.name.trim() === form.to_account_name.trim()) : undefined
   const fromCurrency = (fromAccount?.currency || '').trim().toUpperCase()
   const toCurrency = (toAccount?.currency || '').trim().toUpperCase()
-  const isCrossCurrencyTransfer = Boolean(isTransfer && fromCurrency && toCurrency && fromCurrency !== toCurrency)
-  const transferToAmountText = form.transfer_to_amount.trim()
-  const transferToAmountNumber = Number(transferToAmountText)
-  const transferToAmountValid = !transferToAmountText
-    ? !isCrossCurrencyTransfer
-    : Number.isFinite(transferToAmountNumber) && transferToAmountNumber > 0
+  const transferToAmountNumber = Number(form.transfer_to_amount.trim())
+  const transferToAmountValid = !isDifferentCurrencyTransfer || (Number.isFinite(transferToAmountNumber) && transferToAmountNumber > 0)
   const transferOutAmountNumber = Number(form.amount)
-  const impliedRate = isCrossCurrencyTransfer && Number.isFinite(transferOutAmountNumber) && transferOutAmountNumber > 0 && transferToAmountValid
+  const impliedRate = isDifferentCurrencyTransfer && fromCurrency && toCurrency && Number.isFinite(transferOutAmountNumber) && transferOutAmountNumber > 0 && transferToAmountValid
     ? transferToAmountNumber / transferOutAmountNumber
     : null
+  const transferToAccountOptions = accountOptionsWithPinned(form.to_account_name)
+    .filter((name) => name !== form.from_account_name.trim())
+    .filter((name) => {
+      if (!fromCurrency) return true
+      const currency = (accounts.find((row) => row.name.trim() === name)?.currency || '').trim().toUpperCase()
+      if (!currency) return true
+      return form.transfer_currency_mode === 'different' ? currency !== fromCurrency : currency === fromCurrency
+    })
   // 非转账允许不选账户（与 mobile 保持一致，tx.accountId 本来就是 nullable）；
   // 转账必须两端都选（否则无法表达方向）。
   const canSubmit = Boolean(writeLedgerId.trim()) && (isTransfer
@@ -370,6 +375,7 @@ export function TransactionsPanel({
         tx_type: nextType,
         account_name: '',
         currency: '',
+        transfer_currency_mode: 'same',
         transfer_to_amount: '',
         category_name: '',
         category_kind: 'transfer',
@@ -386,6 +392,7 @@ export function TransactionsPanel({
       category_name: keepCategory,
       from_account_name: '',
       to_account_name: '',
+      transfer_currency_mode: 'same',
       transfer_to_amount: '',
       // 不计入预算仅 expense 显示;切到 income 时清掉
       exclude_from_budget: nextType === 'expense' ? form.exclude_from_budget : false
@@ -549,11 +556,31 @@ export function TransactionsPanel({
             {isTransfer ? (
               <>
                 <div className="space-y-1">
+                  <Label>{t('transactions.transfer.currencyMode')}</Label>
+                  <Select
+                    value={form.transfer_currency_mode}
+                    onValueChange={(value) =>
+                      onFormChange({
+                        ...form,
+                        transfer_currency_mode: value as TxForm['transfer_currency_mode'],
+                        to_account_name: '',
+                        transfer_to_amount: ''
+                      })
+                    }
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="same">{t('transactions.transfer.sameCurrency')}</SelectItem>
+                      <SelectItem value="different">{t('transactions.transfer.differentCurrency')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
                   <Label>{t('transactions.placeholder.fromAccountName')}</Label>
                   <Select
                     value={form.from_account_name || undefined}
                     disabled={dictionariesLoading}
-                    onValueChange={(value) => onFormChange({ ...form, from_account_name: value, transfer_to_amount: '' })}
+                    onValueChange={(value) => onFormChange({ ...form, from_account_name: value, to_account_name: '', transfer_to_amount: '' })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={t('transactions.placeholder.fromAccountName')} />
@@ -583,7 +610,7 @@ export function TransactionsPanel({
                       <SelectValue placeholder={t('transactions.placeholder.toAccountName')} />
                     </SelectTrigger>
                     <SelectContent>
-                      {accountOptionsWithPinned(form.to_account_name).map((name) => (
+                      {transferToAccountOptions.map((name) => (
                         <SelectItem key={name} value={name}>
                           {name}{accounts.find((row) => row.name.trim() === name)?.currency ? ` (${accounts.find((row) => row.name.trim() === name)?.currency?.toUpperCase()})` : ''}
                           {hiddenAccountNames.has(name) ? (
@@ -596,23 +623,22 @@ export function TransactionsPanel({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
-                  <Label>{`${t('transactions.transfer.inAmount')}${toCurrency ? ` (${toCurrency})` : ''}`}</Label>
+                {isDifferentCurrencyTransfer ? (
+                  <div className="space-y-1">
+                    <Label>{`${t('transactions.transfer.inAmount')}${toCurrency ? ` (${toCurrency})` : ''}`}</Label>
                     <Input
                       inputMode="decimal"
                       value={form.transfer_to_amount}
                       onChange={(e) => onFormChange({ ...form, transfer_to_amount: e.target.value })}
                       placeholder={t('transactions.transfer.inAmount')}
                     />
-                  {isCrossCurrencyTransfer && impliedRate != null ? (
-                    <p className="text-xs text-muted-foreground">
-                      {t('transactions.transfer.impliedRate')} 1 {fromCurrency} = {impliedRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} {toCurrency}
-                    </p>
-                  ) : null}
-                  {!isCrossCurrencyTransfer && fromCurrency && toCurrency ? (
-                    <p className="text-xs text-muted-foreground">{t('transactions.transfer.sameCurrencyHint')}</p>
-                  ) : null}
-                </div>
+                    {impliedRate != null ? (
+                      <p className="text-xs text-muted-foreground">
+                        {t('transactions.transfer.impliedRate')} 1 {fromCurrency} = {impliedRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} {toCurrency}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             ) : (
               <div className="space-y-1">
