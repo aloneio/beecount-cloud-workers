@@ -46,35 +46,42 @@ function stripBomAndNormalize(text: string): string {
 
 function parseCsvRows(text: string, delimiter = ','): string[][] {
   if (!text.trim()) return [];
-  const lines = text.split('\n');
-  return lines
-    .filter(line => line.trim())
-    .map(line => parseCsvLine(line, delimiter));
-}
 
-function parseCsvLine(line: string, delimiter = ','): string[] {
-  const result: string[] = [];
+  const rows: string[][] = [];
+  let row: string[] = [];
   let current = '';
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
+  const pushCell = () => {
+    row.push(current.trim());
+    current = '';
+  };
+  const pushRow = () => {
+    pushCell();
+    if (row.some((cell) => cell.trim() !== '')) rows.push(row);
+    row = [];
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
     if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
+      if (inQuotes && text[i + 1] === '"') {
         current += '"';
         i++;
       } else {
         inQuotes = !inQuotes;
       }
     } else if (char === delimiter && !inQuotes) {
-      result.push(current.trim());
-      current = '';
+      pushCell();
+    } else if (char === '\n' && !inQuotes) {
+      pushRow();
     } else {
       current += char;
     }
   }
-  result.push(current.trim());
-  return result;
+
+  if (current.length > 0 || row.length > 0) pushRow();
+  return rows;
 }
 
 function buildImportData(rows2d: string[][], forcedSource?: SourceFormat): ImportData {

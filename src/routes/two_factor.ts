@@ -22,9 +22,9 @@ import { serverLogger } from '../lib/logger';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
-import { validateAccessToken, createAccessToken, createRefreshToken, verifyPassword, base64urlDecode, sha256 } from '../auth';
-import { upsertDevice } from './auth';
-import { isRateLimited } from '../lib/rate-limit';
+import { validateAccessToken, validateSignedToken, createAccessToken, createRefreshToken, verifyPassword, sha256 } from '../auth';
+import { upsertDevice } from '../lib/device-upsert';
+import { isRateLimitedDistributed } from '../lib/rate-limit';
 
 // ===========================
 // 辅助函数
@@ -177,6 +177,7 @@ const TwoFARegenerateSchema = z.object({
 type Bindings = {
   DB: D1Database;
   JWT_SECRET: string;
+  BEECOUNT_DO?: DurableObjectNamespace;
 };
 
 type Variables = {
@@ -300,22 +301,17 @@ twoFactorRouter.post('/confirm', zValidator('json', TwoFAConfirmSchema), async (
     return c.json({ error: 'Invalid TOTP code.' }, 400);
   }
 
-  await db
-    .prepare('UPDATE users SET totp_enabled = 1, totp_enabled_at = ? WHERE id = ?')
-    .bind(serverNow, userId)
-    .run();
-
   const recoveryCodes = generateRecoveryCodes();
-
-  await db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(userId).run();
-
-  for (const plainCode of recoveryCodes) {
-    const codeHash = await sha256Hash(plainCode);
-    await db
-      .prepare('INSERT INTO recovery_codes (user_id, code_hash, created_at) VALUES (?, ?, ?)')
-      .bind(userId, codeHash, serverNow)
-      .run();
-  }
+  const recoveryHashes = await Promise.all(recoveryCodes.map((plainCode) => sha256Hash(plainCode)));
+  await db.batch([
+    db.prepare('UPDATE users SET totp_enabled = 1, totp_enabled_at = ? WHERE id = ?')
+      .bind(serverNow, userId),
+    db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(userId),
+    ...recoveryHashes.map((codeHash) =>
+      db.prepare('INSERT INTO recovery_codes (user_id, code_hash, created_at) VALUES (?, ?, ?)')
+        .bind(userId, codeHash, serverNow)
+    ),
+  ]);
 
   return c.json({
     enabled: true,
@@ -326,7 +322,7 @@ twoFactorRouter.post('/confirm', zValidator('json', TwoFAConfirmSchema), async (
 twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c) => {
   const clientIp = c.req.header('CF-Connecting-IP') || 'unknown';
   serverLogger.info('app', `[2FA-VERIFY] called from ${clientIp}`);
-  if (isRateLimited('2fa-verify', clientIp, 60, 5)) {
+  if (await isRateLimitedDistributed(c.env.BEECOUNT_DO, '2fa-verify', clientIp, 60, 5)) {
     return c.json({ error: 'Too many requests. Try again later.' }, 429);
   }
   const db = c.env.DB;
@@ -343,22 +339,11 @@ twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c)
     return c.json({ error: 'Missing challenge token.' }, 400);
   }
 
-  // 验证 challenge_token 签名（防止伪造）
-  const challengeResult = await validateAccessToken(challenge_token, jwtSecret);
-  if (!challengeResult || !('userId' in challengeResult)) {
+  // challenge 需要完整验签 + 过期检查，并且只能接受 totp_challenge 类型。
+  // access / refresh token 不能替代第二因素。
+  const challengeResult = await validateSignedToken(challenge_token, jwtSecret, 'totp_challenge');
+  if (!challengeResult || 'expired' in challengeResult) {
     return c.json({ error: 'Invalid or expired challenge token.' }, 401);
-  }
-  // 验证 token type 必须是 totp_challenge（防止用 access token 绕过 2FA）
-  const challengeParts = challenge_token.split('.');
-  if (challengeParts.length === 3) {
-    try {
-      const payloadStr = base64urlDecode(challengeParts[1]);
-      if (!payloadStr) { return c.json({ error: 'Invalid or expired challenge token.' }, 401); }
-      const payload = JSON.parse(payloadStr);
-      if (payload.type !== 'totp_challenge') {
-        return c.json({ error: 'Invalid or expired challenge token.' }, 401);
-      }
-    } catch { return c.json({ error: 'Invalid or expired challenge token.' }, 401); }
   }
   const userId = challengeResult.userId;
 
@@ -380,6 +365,7 @@ twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c)
   }
 
   let isValid = false;
+  let usedRecoveryCodeId: number | null = null;
 
   if (method === 'totp') {
     const decryptedSecret = await getDecryptedTotpSecret(user.totp_secret_encrypted, jwtSecret);
@@ -403,7 +389,7 @@ twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c)
       }
       if (same) {
         isValid = true;
-        await db.prepare('UPDATE recovery_codes SET used_at = ? WHERE id = ?').bind(serverNow, rc.id).run();
+        usedRecoveryCodeId = rc.id;
         break;
       }
     }
@@ -430,7 +416,7 @@ twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c)
   const refreshExpiresAt = new Date(Date.now() + refreshExpiresIn * 1000);
   const refreshTokenId = randomUUID();
 
-  await db.batch([
+  const verifyStatements = [
     db.prepare(
       `INSERT INTO refresh_tokens (id, user_id, device_id, token_hash, expires_at)
        VALUES (?, ?, ?, ?, ?)`
@@ -438,7 +424,14 @@ twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c)
     db.prepare(
       "DELETE FROM refresh_tokens WHERE user_id = ? AND device_id = ? AND (revoked_at IS NOT NULL OR expires_at < datetime('now'))"
     ).bind(user.id, resolvedDeviceId),
-  ]);
+  ];
+  if (usedRecoveryCodeId !== null) {
+    verifyStatements.push(
+      db.prepare('UPDATE recovery_codes SET used_at = ? WHERE id = ? AND used_at IS NULL')
+        .bind(serverNow, usedRecoveryCodeId)
+    );
+  }
+  await db.batch(verifyStatements);
 
   return c.json({
     requires_2fa: false,
@@ -486,12 +479,11 @@ twoFactorRouter.post('/disable', zValidator('json', TwoFADisableSchema), async (
     return c.json({ error: 'Invalid TOTP code.' }, 400);
   }
 
-  await db
-    .prepare('UPDATE users SET totp_secret_encrypted = NULL, totp_enabled = 0, totp_enabled_at = NULL WHERE id = ?')
-    .bind(userId)
-    .run();
-
-  await db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(userId).run();
+  await db.batch([
+    db.prepare('UPDATE users SET totp_secret_encrypted = NULL, totp_enabled = 0, totp_enabled_at = NULL WHERE id = ?')
+      .bind(userId),
+    db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(userId),
+  ]);
 
   return c.json({ disabled: true });
 });
@@ -522,17 +514,15 @@ twoFactorRouter.post('/recovery-codes/regenerate', zValidator('json', TwoFARegen
     return c.json({ error: 'Invalid TOTP code.' }, 400);
   }
 
-  await db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(userId).run();
-
   const newCodes = generateRecoveryCodes();
-
-  for (const plainCode of newCodes) {
-    const codeHash = await sha256Hash(plainCode);
-    await db
-      .prepare('INSERT INTO recovery_codes (user_id, code_hash, created_at) VALUES (?, ?, ?)')
-      .bind(userId, codeHash, serverNow)
-      .run();
-  }
+  const newHashes = await Promise.all(newCodes.map((plainCode) => sha256Hash(plainCode)));
+  await db.batch([
+    db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(userId),
+    ...newHashes.map((codeHash) =>
+      db.prepare('INSERT INTO recovery_codes (user_id, code_hash, created_at) VALUES (?, ?, ?)')
+        .bind(userId, codeHash, serverNow)
+    ),
+  ]);
 
   return c.json({ recovery_codes: newCodes });
 });

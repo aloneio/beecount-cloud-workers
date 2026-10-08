@@ -478,40 +478,27 @@ writeRouter.patch('/ledgers/:ledgerId/meta', zValidator('json', WriteLedgerMetaU
   const req = c.req.valid('json');
   const serverNow = nowUtc();
 
-  // 查找账本
+  // Owner-only metadata update. Read the current row first so omitted PATCH
+  // fields are preserved rather than reset to external_id/CNY/1.
   const ledger = await db
-    .prepare('SELECT id, external_id FROM ledgers WHERE user_id = ? AND external_id = ?')
+    .prepare('SELECT id, external_id, name, currency, month_start_day FROM ledgers WHERE user_id = ? AND external_id = ?')
     .bind(userId, ledgerId)
-    .first<{ id: string; external_id: string }>();
+    .first<{ id: string; external_id: string; name: string | null; currency: string; month_start_day: number }>();
 
   if (!ledger) {
     return c.json({ error: 'Ledger not found' }, 404);
   }
 
-  const syncId = randomUUID();
-
-  // 获取现有 payload
-  const latestChange = await db
-    .prepare(
-      `SELECT payload_json FROM sync_changes
-       WHERE ledger_id = ? AND entity_type = 'ledger_snapshot'
-       ORDER BY change_id DESC LIMIT 1`
-    )
-    .bind(ledger.id)
-    .first<{ payload_json: string }>();
-
-  const existingPayload = latestChange
-    ? (JSON.parse(latestChange.payload_json) as Record<string, unknown>)
-    : {};
-
+  const nextName = req.ledger_name !== undefined ? req.ledger_name : ledger.name;
+  const nextCurrency = req.currency !== undefined ? req.currency : ledger.currency;
+  const nextMonthStartDay = req.month_start_day !== undefined ? req.month_start_day : ledger.month_start_day;
   const newPayload = {
-    ...existingPayload,
-    ...(req.ledger_name !== undefined && { ledgerName: req.ledger_name }),
-    ...(req.currency !== undefined && { currency: req.currency }),
-    ...(req.month_start_day !== undefined && { monthStartDay: req.month_start_day }),
+    ledgerName: nextName,
+    currency: nextCurrency,
+    monthStartDay: nextMonthStartDay,
   };
 
-  await db.batch([
+  const batchResults = await db.batch([
     db.prepare(
       `INSERT INTO sync_changes
        (user_id, ledger_id, entity_type, entity_sync_id, action, payload_json, updated_at, updated_by_user_id)
@@ -529,12 +516,13 @@ writeRouter.patch('/ledgers/:ledgerId/meta', zValidator('json', WriteLedgerMetaU
     db.prepare(
       `UPDATE ledgers SET name = ?, currency = ?, month_start_day = ? WHERE id = ?`
     ).bind(
-      req.ledger_name ?? ledger.external_id,
-      req.currency ?? 'CNY',
-      req.month_start_day ?? 1,
+      nextName,
+      nextCurrency,
+      nextMonthStartDay,
       ledger.id,
     ),
   ]);
+  const newChangeId = batchResults[0].meta.last_row_id as number;
 
   await insertAuditLog({
     db, userId, ledgerId: ledger.id, action: 'update', entityType: 'ledger', entityId: ledgerId,
@@ -544,7 +532,7 @@ writeRouter.patch('/ledgers/:ledgerId/meta', zValidator('json', WriteLedgerMetaU
   return c.json({
     ledger_id: ledgerId,
     base_change_id: 0,
-    new_change_id: 0,
+    new_change_id: newChangeId,
     server_timestamp: serverNow,
     idempotency_replayed: false,
     entity_id: ledger.id,

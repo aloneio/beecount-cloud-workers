@@ -182,12 +182,11 @@ importRouter.post('/upload', async (c) => {
     if (!file) return c.json({ error: 'No file provided' }, 400);
 
     const fileName = file.name || 'import.csv';
-    const fileBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(fileBuffer);
-
-    if (bytes.length > 10 * 1024 * 1024) {
+    if (file.size > 10 * 1024 * 1024) {
       return c.json({ error: 'File too large (max 10MB)', error_code: 'IMPORT_FILE_TOO_LARGE', limit_bytes: 10 * 1024 * 1024 }, 413);
     }
+    const fileBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(fileBuffer);
 
     // 读取前端的 target_ledger_id（原版 Python 支持从 formData 获取）
     const formTargetLedgerId = (formData.get('target_ledger_id') as string) || null;
@@ -282,7 +281,7 @@ importRouter.post('/upload', async (c) => {
 
     let existing = { txKeys: new Set<string>(), categoryNames: new Set<string>(), accountNames: new Set<string>(), tagNames: new Set<string>() };
     if (formTargetLedgerId) {
-      existing = await buildExistingSets(db, formTargetLedgerId);
+      existing = await buildExistingSets(db, formTargetLedgerId, userId);
     }
 
     for (const tx of sampleTxs) {
@@ -386,7 +385,7 @@ importRouter.post('/:token/preview', zValidator('json', ImportPreviewSchema), as
   // Compute stats
   let existing = { txKeys: new Set<string>(), categoryNames: new Set<string>(), accountNames: new Set<string>(), tagNames: new Set<string>() };
   if (targetLedgerId) {
-    existing = await buildExistingSets(db, targetLedgerId);
+    existing = await buildExistingSets(db, targetLedgerId, userId);
   }
   const stats = computeStats(txs, existing, session.data.rows, mapping);
 
@@ -528,7 +527,7 @@ importRouter.post('/:token/execute', async (c) => {
   const txs = applyMapping(session.data.rows, mapping);
 
   // Get existing sets for dedup
-  const existing = await buildExistingSets(db, targetLedgerId);
+  const existing = await buildExistingSets(db, targetLedgerId, userId);
 
   // SSE stream for execution progress
   const encoder = new TextEncoder();

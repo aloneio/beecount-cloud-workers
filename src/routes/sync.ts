@@ -1,3 +1,4 @@
+import { boundedInt } from '../lib/query-params';
 /**
  * 同步路由模块 - 实现 BeeCount Cloud 核心同步协议
  *
@@ -94,14 +95,14 @@ function nullOr(v: unknown): unknown {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function resolveTagsCsv(db: D1Database, tags: string | null, tagIds: string[] | null): Promise<string | null> {
+async function resolveTagsCsv(db: D1Database, userId: string, tags: string | null, tagIds: string[] | null): Promise<string | null> {
   if (!tags && !tagIds?.length) return null;
   const parts = (tags ?? '').split(',').map((t) => t.trim()).filter(Boolean);
   if (parts.length === 0) return null;
   const nameMap: Record<string, string> = {};
   const uuidParts = parts.filter((p) => UUID_RE.test(p));
   if (uuidParts.length > 0) {
-    const rows = await db.prepare(`SELECT sync_id, name FROM user_tag_projection WHERE sync_id IN (${uuidParts.map(() => '?').join(',')})`).bind(...uuidParts).all<{ sync_id: string; name: string }>();
+    const rows = await db.prepare(`SELECT sync_id, name FROM user_tag_projection WHERE user_id = ? AND sync_id IN (${uuidParts.map(() => '?').join(',')})`).bind(userId, ...uuidParts).all<{ sync_id: string; name: string }>();
     for (const r of rows.results) nameMap[r.sync_id] = r.name;
   }
   const resolved = parts.map((p) => (UUID_RE.test(p) ? (nameMap[p] ?? p) : p));
@@ -324,7 +325,7 @@ syncRouter.post('/push', zValidator('json', SyncPushRequestSchema), async (c) =>
 
 
     // ====================== 优化1：批量预加载账本 ======================
-    const ledgerExternalIds = [...new Set(changes.filter(c => c.ledger_id).map(c => c.ledger_id as string))];
+    const ledgerExternalIds = [...new Set(changes.filter(c => c.ledger_id && !isUserGlobalType(c.entity_type)).map(c => c.ledger_id as string))];
     serverLogger.info('src.routers.sync', '[SYNC] ledgerExternalIds:', ledgerExternalIds);
     const ledgerMap: Record<string, { id: string; user_id: string; external_id: string }> = {};
     
@@ -390,6 +391,7 @@ syncRouter.post('/push', zValidator('json', SyncPushRequestSchema), async (c) =>
     if (changes.length > 0) {
       // 准备有效的变更查询参数
       const validChangeEntries = changes
+        .filter(c => !isUserGlobalType(c.entity_type))
         .map(c => ({
           ledgerId: c.ledger_id ? ledgerMap[c.ledger_id]?.id : undefined,
           entity_type: c.entity_type,
@@ -439,7 +441,7 @@ syncRouter.post('/push', zValidator('json', SyncPushRequestSchema), async (c) =>
     const USER_GLOBAL_LEDGER_SENTINEL = '__user_global__';
 const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override'];
     const userGlobalEntries = changes
-      .filter(c => USER_GLOBAL_TYPES.includes(c.entity_type) && !c.ledger_id)
+      .filter(c => USER_GLOBAL_TYPES.includes(c.entity_type))
       .map(c => ({ entity_type: c.entity_type, entity_sync_id: c.entity_sync_id }));
 
     for (let i = 0; i < userGlobalEntries.length; i += 30) {
@@ -485,7 +487,7 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
     }> = [];
 
     // 全量预载 user-global 投影已有的行（一次查询替代每批多次 SELECT，大幅减少 D1 调用数）
-    const userGlobalChanges = changes.filter(c => USER_GLOBAL_TYPES.includes(c.entity_type) && !c.ledger_id);
+    const userGlobalChanges = changes.filter(c => USER_GLOBAL_TYPES.includes(c.entity_type));
     const userGlobalPreloaded = await preloadUserGlobalProjections(db, userId, userGlobalChanges.map(c => ({ entity_type: c.entity_type, entity_sync_id: c.entity_sync_id })));
 
     // 冲突审计日志收集器：批量执行替代逐条 INSERT，避免超 api_limit
@@ -526,7 +528,7 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
         // user-global 实体：category/account/tag 可以不依附 ledger
         const USER_GLOBAL_LEDGER_SENTINEL = '__user_global__';
 const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override'];
-        const isUserGlobal = USER_GLOBAL_TYPES.includes(change.entity_type) && !change.ledger_id;
+        const isUserGlobal = USER_GLOBAL_TYPES.includes(change.entity_type);
 
         const changeUpdatedAt = toUtcDate(change.updated_at);
         const maxAllowed = new Date(new Date(serverNow).getTime() + 5000);
@@ -960,7 +962,7 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
     serverLogger.info('src.routers.sync', `[SYNC] ===== ${CODE_VERSION} ERROR =====`);
     
     // 响应体带上真实错误摘要（app debugPrint 会打出来，便于定位）
-    return c.json({ error: 'Internal server error', detail: errMessage.slice(0, 300) }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -1095,8 +1097,8 @@ syncRouter.get('/pull', async (c) => {
   const userId = c.get('userId');
   const db = c.env.DB;
   
-  const since = parseInt(c.req.query('since') ?? '0');
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '1000', 10), 5000);
+  const since = boundedInt(c.req.query('since'), 0, 0, Number.MAX_SAFE_INTEGER);
+  const limit = boundedInt(c.req.query('limit'), 1000, 1, 5000);
   const ledgerId = c.req.query('ledger_id');
   const deviceId = c.req.query('device_id');
 
@@ -1982,7 +1984,7 @@ async function applyChangeToProjection(
       } else {
         const tagPayload = (payload.tags as string) ?? null;
         const tagIdsPayload = Array.isArray(payload.tagIds) ? payload.tagIds as string[] : null;
-        const resolvedTagsCsv = await resolveTagsCsv(db, tagPayload, tagIdsPayload);
+        const resolvedTagsCsv = await resolveTagsCsv(db, userId, tagPayload, tagIdsPayload);
 
         // 合并已有行（与原版 _merge_from_spec 对齐）
         const existingTx = await db.prepare(

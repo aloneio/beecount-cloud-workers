@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { categorySubtreeIds, loadCategoryHierarchy } from '../lib/category-hierarchy';
+import { csvField, sanitizeCsvFilename } from '../lib/csv';
 
 type Bindings = { DB: D1Database };
 type Variables = { userId: string };
@@ -24,18 +25,6 @@ const csvRouter = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 // CSV 辅助（对齐原版 _csv_field / _sanitize_filename）
 // ===========================
 
-function csvField(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  const s = String(value);
-  if (s === '') return '';
-  if (/[,"\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-  return s;
-}
-
-function sanitizeFilename(name: string | null, maxLen = 64): string {
-  const safe = (name ?? '').replace(/[\\/:*?"<>|\r\n]/g, '_').trim() || 'ledger';
-  return safe.replace(/^[ .]+|[ .]+$/g, '').slice(0, maxLen) || 'ledger';
-}
 
 function tagsList(raw: string | null): string[] {
   if (!raw) return [];
@@ -146,7 +135,7 @@ csvRouter.get('/workspace/transactions.csv', zValidator('query', ExportQuerySche
   }
 
   const ledgerInternalIds = ledgers.results.map(l => l.id);
-  const primaryName = sanitizeFilename(ledgers.results[0]?.name ?? ledgers.results[0]?.external_id ?? 'ledger');
+  const primaryName = sanitizeCsvFilename(ledgers.results[0]?.name ?? ledgers.results[0]?.external_id ?? 'ledger');
   const ledgerCurrencyMap = new Map(ledgers.results.map(l => [l.id, l.currency || 'CNY']));
 
   // 2. 构建查询

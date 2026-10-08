@@ -8,6 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { hashPassword, verifyPassword } from '../auth';
 import { DEFAULT_AI_CONFIG } from '../lib/defaults';
 import { uploadToStorage, downloadFromStorage, deleteFromStorage } from '../lib/storage-adapter';
+import { detectSafeImageMime, extensionForImageMime } from '../lib/image-mime';
 
 type Bindings = {
   DB: D1Database;
@@ -134,7 +135,7 @@ profileRouter.patch('/me', zValidator('json', ProfilePatchSchema), async (c) => 
 // POST /me/change-password
 profileRouter.post('/me/change-password', zValidator('json', z.object({
   current_password: z.string(),
-  new_password: z.string().min(6),
+  new_password: z.string().min(8),
 })), async (c) => {
   const userId = c.get('userId');
   const db = c.env.DB;
@@ -144,12 +145,14 @@ profileRouter.post('/me/change-password', zValidator('json', z.object({
   const valid = await verifyPassword(user.password_hash, current_password);
   if (!valid) return c.json({ error: 'Invalid current password' }, 401);
   const hash = await hashPassword(new_password);
-  await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hash, userId).run();
+  const now = nowUtc();
+  await db.batch([
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hash, userId),
+    db.prepare('UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').bind(now, userId),
+  ]);
   return c.json({ success: true });
 });
 
-const ALLOWED_MIME: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-const FILE_EXT_MIME: Record<string, string> = { 'jpg': 'jpg', 'jpeg': 'jpg', 'png': 'png', 'webp': 'webp' };
 const MAX_AVATAR_BYTES = 1 * 1024 * 1024;
 
 // POST /avatar - 上传头像（支持 R2 + 所有备份远端）
@@ -163,34 +166,39 @@ profileRouter.post('/avatar', async (c) => {
     const file = formData.get('file') as File | null;
     if (!file) return c.json({ error: 'No file provided' }, 400);
 
-    const mimeLower = (file.type || '').toLowerCase();
-    const fileName = (file.name || '').toLowerCase();
-    const fileExt = fileName.includes('.') ? fileName.split('.').pop() || '' : '';
-    const ext = ALLOWED_MIME[mimeLower] || FILE_EXT_MIME[fileExt];
-    if (!ext) return c.json({ error: `Profile avatar format invalid: ${mimeLower || fileExt || 'unknown'}` }, 400);
-
-    const fileBuffer = await file.arrayBuffer();
-    if (fileBuffer.byteLength > MAX_AVATAR_BYTES) {
+    if (file.size > MAX_AVATAR_BYTES) {
       return c.json({ error: 'Profile avatar upload too large (max 1MB)' }, 413);
+    }
+    const fileBytes = new Uint8Array(await file.arrayBuffer());
+    const detectedMime = detectSafeImageMime(fileBytes);
+    if (!detectedMime || detectedMime === 'image/gif') return c.json({ error: 'Profile avatar format invalid: expected JPEG, PNG or WebP' }, 400);
+    const declaredMime = (file.type || '').toLowerCase();
+    if (declaredMime && declaredMime !== 'application/octet-stream' && declaredMime !== detectedMime) {
+      return c.json({ error: 'Profile avatar MIME type does not match file contents' }, 400);
     }
 
     const fileId = crypto.randomUUID();
-    const storagePath = `avatars/${userId}/${fileId}`;
-
-    // 删除旧头像
+    const storagePath = `avatars/${userId}/${fileId}.${extensionForImageMime(detectedMime)}`;
     const oldProfile = await db.prepare('SELECT avatar_file_id FROM user_profiles WHERE user_id = ?').bind(userId).first<{ avatar_file_id: string }>();
-    if (oldProfile?.avatar_file_id) {
-      // 兼容旧路径格式（可能是纯 fileId 或完整路径）
-      const oldKey = oldProfile.avatar_file_id.startsWith('avatars/') ? oldProfile.avatar_file_id : `avatars/${userId}/${oldProfile.avatar_file_id}`;
-      await deleteFromStorage(db, c.env, oldKey);
-    }
 
-    // 上传到新位置
-    const uploadResult = await uploadToStorage(db, c.env, storagePath, new Uint8Array(fileBuffer), mimeLower);
+    // 先上传新对象，成功后才切换 DB 指针。这样新上传失败不会破坏旧头像。
+    const uploadResult = await uploadToStorage(db, c.env, storagePath, fileBytes, detectedMime);
     if (!uploadResult.ok) return c.json({ error: 'Avatar upload failed (no available storage)' }, 503);
 
     const serverNow = nowUtc();
-    await db.prepare('UPDATE user_profiles SET avatar_file_id = ?, avatar_version = avatar_version + 1, updated_at = ? WHERE user_id = ?').bind(storagePath, serverNow, userId).run();
+    try {
+      const updated = await db.prepare('UPDATE user_profiles SET avatar_file_id = ?, avatar_version = avatar_version + 1, updated_at = ? WHERE user_id = ?')
+        .bind(storagePath, serverNow, userId).run();
+      if (!updated.meta?.changes) throw new Error('Profile row not found');
+    } catch (err) {
+      await deleteFromStorage(db, c.env, storagePath).catch(() => {});
+      throw err;
+    }
+
+    if (oldProfile?.avatar_file_id) {
+      const oldKey = oldProfile.avatar_file_id.startsWith('avatars/') ? oldProfile.avatar_file_id : `avatars/${userId}/${oldProfile.avatar_file_id}`;
+      await deleteFromStorage(db, c.env, oldKey).catch(() => {});
+    }
 
     const profile = await db.prepare('SELECT avatar_version FROM user_profiles WHERE user_id = ?').bind(userId).first<{ avatar_version: number }>();
     const ver = profile?.avatar_version ?? 1;

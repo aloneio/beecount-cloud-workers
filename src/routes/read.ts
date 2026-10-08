@@ -1,3 +1,4 @@
+import { boundedInt, finiteNumber } from '../lib/query-params';
 /**
  * 读路由模块 - 实现 BeeCount Cloud 只读查询接口
  *
@@ -481,12 +482,12 @@ readRouter.get('/workspace/transactions', async (c) => {
   const tagSyncId = c.req.query('tag_sync_id') ?? null;
   const categorySyncId = c.req.query('category_sync_id') ?? null;
   const accountSyncId = c.req.query('account_sync_id') ?? null;
-  const amountMin = c.req.query('amount_min') ? Number(c.req.query('amount_min')) : null;
-  const amountMax = c.req.query('amount_max') ? Number(c.req.query('amount_max')) : null;
+  const amountMin = finiteNumber(c.req.query('amount_min'));
+  const amountMax = finiteNumber(c.req.query('amount_max'));
   const dateFrom = c.req.query('date_from') ?? null;
   const dateTo = c.req.query('date_to') ?? null;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '200', 10), 5000);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = boundedInt(c.req.query('limit'), 200, 1, 5000);
+  const offset = boundedInt(c.req.query('offset'), 0, 0, 1_000_000);
 
   serverLogger.info('src.routers.read', '[READ] /workspace/transactions called, ledgerId:', ledgerId, 'dateFrom:', dateFrom, 'dateTo:', dateTo, 'limit:', limit, 'offset:', offset);
 
@@ -985,8 +986,8 @@ readRouter.get('/ledgers/:ledgerExternalId/transactions', async (c) => {
   const q = c.req.query('q') ?? null;
   const startAt = c.req.query('start_at') ?? null;
   const endAt = c.req.query('end_at') ?? null;
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 2000);
-  const offset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = boundedInt(c.req.query('limit'), 20, 1, 2000);
+  const offset = boundedInt(c.req.query('offset'), 0, 0, 1_000_000);
 
   // 查询账本（先 external_id，再内部 id，再共享账本）
   let ledger = await db

@@ -309,7 +309,7 @@ describe('MCP transaction datetime parsing', () => {
   function dbWithOffset(minutes: number): D1Database {
     return {
       prepare() {
-        return { bind() { return this; }, async first() { return { value: String(minutes) }; } };
+        return { bind() { return this; }, async first() { return { timezone_offset: String(minutes) }; } };
       },
     } as unknown as D1Database;
   }

@@ -25,10 +25,15 @@ export interface ExistingSets {
 export async function buildExistingSets(
   db: D1Database,
   ledgerId: string,
+  userId: string,
 ): Promise<ExistingSets> {
   const ledger = await db
-    .prepare('SELECT id, user_id FROM ledgers WHERE external_id = ?')
-    .bind(ledgerId)
+    .prepare(`SELECT l.id, l.user_id FROM ledgers l
+              WHERE l.external_id = ?
+                AND (l.user_id = ? OR EXISTS (
+                  SELECT 1 FROM ledger_members lm WHERE lm.ledger_id = l.id AND lm.user_id = ?
+                ))`)
+    .bind(ledgerId, userId, userId)
     .first<{ id: string; user_id: string }>();
 
   if (!ledger) {
