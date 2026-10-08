@@ -144,7 +144,9 @@ jobs:
           echo "Patching account_id to: $ACCOUNT_ID"
           sed -i "s|database_id = \"[^\"]*\"|database_id = \"$DB_ID\"|" wrangler.toml
           sed -i "s|CLOUDFLARE_ACCOUNT_ID = \"[^\"]*\"|CLOUDFLARE_ACCOUNT_ID = \"$ACCOUNT_ID\"|" wrangler.toml
-          grep "database_id\|CLOUDFLARE_ACCOUNT_ID" wrangler.toml
+          sed -i "s|D1_DATABASE_ID = \"[^\"]*\"|D1_DATABASE_ID = \"$DB_ID\"|" wrangler.toml
+          grep "database_id\|CLOUDFLARE_ACCOUNT_ID\|D1_DATABASE_ID" wrangler.toml
+          grep -Fq "D1_DATABASE_ID = \"$DB_ID\"" wrangler.toml
 
       - name: Bind R2 bucket to Worker (if R2 enabled)
         if: steps.r2.outputs.r2_enabled == 'true'
