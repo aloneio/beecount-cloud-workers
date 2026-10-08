@@ -1338,8 +1338,8 @@ syncRouter.get('/full', async (c) => {
 
     // latest_cursor 只取该账本的 max change_id（与原版 _max_cursor_for_ledgers 对齐）
     const latestCursorRow = await db
-      .prepare('SELECT MAX(change_id) as max_id FROM sync_changes WHERE ledger_id = ?')
-      .bind(ledger.id)
+      .prepare('SELECT MAX(change_id) as max_id FROM sync_changes WHERE user_id = ? AND (ledger_id = ? OR ledger_id IS NULL)')
+      .bind(userId, ledger.id)
       .first<{ max_id: number | null }>();
     const latestCursor = latestCursorRow?.max_id ?? 0;
 
@@ -1389,7 +1389,23 @@ syncRouter.get('/full', async (c) => {
         monthStartDay: ledger.month_start_day || 1,
         count: txs.results.length,
         items: txs.results.map(r => convertBooleans(r as Record<string, unknown>)),
-        accounts: accounts.results.map(r => convertBooleans(r as Record<string, unknown>)),
+        accounts: accounts.results.map(r => {
+          const account = convertBooleans(r as Record<string, unknown>);
+          // First-sync clients consume the native sync entity format (type,
+          // initialBalance, syncId). Keep DB column aliases for older clients.
+          return {
+            ...account,
+            syncId: account.sync_id,
+            type: account.account_type,
+            accountType: account.account_type,
+            initialBalance: account.initial_balance,
+            creditLimit: account.credit_limit,
+            billingDay: account.billing_day,
+            paymentDueDay: account.payment_due_day,
+            bankName: account.bank_name,
+            cardLastFour: account.card_last_four,
+          };
+        }),
         categories: categories.results.map(r => convertBooleans(r as Record<string, unknown>)),
         tags: tags.results.map(r => convertBooleans(r as Record<string, unknown>)),
         budgets: budgets.results.map(r => convertBooleans(r as Record<string, unknown>)),
@@ -2066,9 +2082,9 @@ async function applyChangeToProjection(
         
         const accountFields: Array<{ col: string; val: unknown }> = [];
         if (payload.name !== undefined) accountFields.push({ col: 'name', val: payload.name });
-        if (payload.account_type !== undefined) accountFields.push({ col: 'account_type', val: payload.account_type });
+        if (payload.account_type !== undefined || payload.accountType !== undefined || payload.type !== undefined) accountFields.push({ col: 'account_type', val: payload.account_type ?? payload.accountType ?? payload.type });
         if (payload.currency !== undefined) accountFields.push({ col: 'currency', val: payload.currency });
-        if (payload.initial_balance !== undefined) accountFields.push({ col: 'initial_balance', val: payload.initial_balance });
+        if (payload.initial_balance !== undefined || payload.initialBalance !== undefined) accountFields.push({ col: 'initial_balance', val: payload.initial_balance ?? payload.initialBalance });
         if (payload.note !== undefined) accountFields.push({ col: 'note', val: payload.note });
         if (payload.credit_limit !== undefined) accountFields.push({ col: 'credit_limit', val: payload.credit_limit });
         if (payload.billing_day !== undefined) accountFields.push({ col: 'billing_day', val: payload.billing_day });
@@ -2102,9 +2118,9 @@ async function applyChangeToProjection(
               change.entity_sync_id,
               userId,
               payload.name ?? null,
-              payload.account_type ?? null,
+              payload.account_type ?? payload.accountType ?? payload.type ?? null,
               payload.currency ?? null,
-              payload.initial_balance ?? 0,
+              payload.initial_balance ?? payload.initialBalance ?? 0,
               payload.note ?? null,
               payload.credit_limit ?? null,
               payload.billing_day ?? null,
