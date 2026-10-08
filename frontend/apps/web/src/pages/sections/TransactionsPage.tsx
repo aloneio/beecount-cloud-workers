@@ -523,9 +523,10 @@ export function TransactionsPage() {
     const source =
       txIsSharedEditor && sharedBundle ? sharedAsRead.accounts : txDictionaryAccounts
     return source.filter((row) => {
-      if (VALUATION_ACCOUNT_TYPES.has(row.account_type || '')) return false
-      // transfer 的币种由两端账户决定，不能先按账本/表单币种裁掉其它钱包。
+      // transfer 允许投资/估值账户作为资金流端点（例如给 Charles Schwab 入金）。
+      // 普通收入/支出仍排除估值账户，避免把投资账户当日常钱包使用。
       if (txForm.tx_type === 'transfer') return true
+      if (VALUATION_ACCOUNT_TYPES.has(row.account_type || '')) return false
       const currency = (row.currency || 'CNY').trim().toUpperCase()
       return currency === txFormCurrency
     })

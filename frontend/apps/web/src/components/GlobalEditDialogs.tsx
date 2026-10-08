@@ -47,6 +47,8 @@ import { onOpenEditCategory, onOpenEditTx, onOpenNewTx } from '../lib/txDialogEv
  * 编辑分类暂时仍走 navigate 到 /app/categories(分类编辑表单依赖 inline form
  * 的 icon picker / parent picker,数据流复杂,后续单独再做全局化)。
  */
+const VALUATION_ACCOUNT_TYPES = new Set(['real_estate', 'vehicle', 'investment', 'insurance', 'social_fund', 'loan'])
+
 export function GlobalEditDialogs() {
   const t = useT()
   const toast = useToast()
@@ -444,8 +446,9 @@ export function GlobalEditDialogs() {
       page={1}
       pageSize={20}
       accounts={editTxAccounts.filter((a) => {
-        // transfer 的币种由转出/转入账户决定；跨币种时必须能看到所有币种账户。
+        // transfer 允许估值账户参与资金流；普通收支继续排除估值账户。
         if (editTxForm.tx_type === 'transfer') return true
+        if (VALUATION_ACCOUNT_TYPES.has(a.account_type || '')) return false
         const wanted = (editTxForm.currency || editTxBase).toUpperCase()
         return ((a.currency || 'CNY').trim().toUpperCase()) === wanted
       })}
