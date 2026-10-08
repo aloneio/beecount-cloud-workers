@@ -80,8 +80,22 @@ describe('read 投影重建账户字段规范化（真实 SQLite）', () => {
 
     const res = await app.request('/api/v1/read/workspace/transactions?ledger_id=ledger-1&account_sync_id=bitget', {}, { DB: db });
     expect(res.status).toBe(200);
-    const body = await res.json() as { items: Array<{ sync_id: string }> };
+    const body = await res.json() as {
+      items: Array<{
+        sync_id: string;
+        from_account_id: string | null;
+        from_account_name: string | null;
+        to_account_id: string | null;
+        to_account_name: string | null;
+      }>;
+    };
     expect(body.items.map((item) => item.sync_id)).toEqual(['tx-transfer-filter']);
+    expect(body.items[0]).toMatchObject({
+      from_account_id: 'bitget',
+      from_account_name: 'Bitget',
+      to_account_id: 'wallet',
+      to_account_name: 'BitgetWallet',
+    });
   });
 
 });
