@@ -96,6 +96,7 @@ interface ReadTransactionOut {
   tx_index: number;
   tx_type: string;
   amount: number;
+  transfer_to_amount: number | null;
   currency_code: string | null;
   native_amount: number | null;
   happened_at: string;
@@ -408,11 +409,11 @@ async function ensureTxProjectionSynced(db: D1Database, userId: string): Promise
               account_sync_id, account_name,
               from_account_sync_id, from_account_name,
               to_account_sync_id, to_account_name,
-              tags_csv, tag_sync_ids_json, attachments_json, tx_index, source_change_id,
+              transfer_to_amount, tags_csv, tag_sync_ids_json, attachments_json, tx_index, source_change_id,
               created_by_user_id, last_edited_by_user_id,
               exclude_from_stats, exclude_from_budget,
               currency_code, native_amount)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             ledger.id,
@@ -431,6 +432,7 @@ async function ensureTxProjectionSynced(db: D1Database, userId: string): Promise
             txAccountCols.from_account_name,
             txAccountCols.to_account_sync_id,
             txAccountCols.to_account_name,
+            (payload.tx_type ?? payload.txType ?? payload.type) === 'transfer' ? (payload.transfer_to_amount ?? payload.transferToAmount ?? null) : null,
             payload.tags ? (Array.isArray(payload.tags) ? payload.tags.join(',') : String(payload.tags)) : null,
             payload.tag_sync_ids ?? payload.tagIds ? JSON.stringify(payload.tag_sync_ids ?? payload.tagIds) : null,
             payload.attachments ? JSON.stringify(payload.attachments) : null,
@@ -593,6 +595,7 @@ readRouter.get('/workspace/transactions', async (c) => {
       ledger_id: (row.ledger_external_id as string) || (row.ledger_id as string),
       tx_type: row.tx_type as string,
       amount: row.amount as number,
+      transfer_to_amount: (row.transfer_to_amount as number) ?? null,
       currency_code: (row.currency_code as string) ?? null,
       native_amount: (row.native_amount as number) ?? null,
       happened_at: row.happened_at as string,
@@ -1087,6 +1090,7 @@ readRouter.get('/ledgers/:ledgerExternalId/transactions', async (c) => {
       tx_index: (row.tx_index as number) ?? 0,
       tx_type: row.tx_type as string,
       amount: (row.amount as number) ?? 0,
+      transfer_to_amount: (row.transfer_to_amount as number) ?? null,
       currency_code: (row.currency_code as string) ?? null,
       native_amount: (row.native_amount as number) ?? null,
       happened_at: row.happened_at as string,
@@ -1191,7 +1195,7 @@ readRouter.get('/ledgers/:ledgerExternalId/accounts', async (c) => {
         `SELECT
            COALESCE(SUM(CASE WHEN tx_type = 'income' AND account_sync_id = ? THEN amount ELSE 0 END), 0) as income_in,
            COALESCE(SUM(CASE WHEN tx_type = 'expense' AND account_sync_id = ? THEN amount ELSE 0 END), 0) as expense_in,
-           COALESCE(SUM(CASE WHEN tx_type = 'transfer' AND to_account_sync_id = ? THEN amount ELSE 0 END), 0) as income_transfer,
+           COALESCE(SUM(CASE WHEN tx_type = 'transfer' AND to_account_sync_id = ? THEN COALESCE(transfer_to_amount, amount) ELSE 0 END), 0) as income_transfer,
            COALESCE(SUM(CASE WHEN tx_type = 'transfer' AND from_account_sync_id = ? THEN amount ELSE 0 END), 0) as expense_transfer
          FROM read_tx_projection
          WHERE ledger_id = ?`

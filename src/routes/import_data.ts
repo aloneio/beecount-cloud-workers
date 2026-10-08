@@ -155,6 +155,7 @@ function buildTxPayload(tx: ImportTransaction, autoTags: string[]): Record<strin
   return {
     type: tx.txType,
     amount: tx.amount,
+    transferToAmount: tx.txType === 'transfer' ? (tx.transferToAmount ?? null) : null,
     happenedAt: tx.happenedAt.slice(0, 10),
     note: tx.note ?? null,
     categoryName: tx.categoryName ?? null,
@@ -593,9 +594,9 @@ importRouter.post('/:token/execute', async (c) => {
                   tags_csv, tag_sync_ids_json, tx_index, source_change_id,
                   exclude_from_stats, exclude_from_budget,
                   created_by_user_id, last_edited_by_user_id,
-                  currency_code, native_amount)
+                  currency_code, native_amount, transfer_to_amount)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT last_insert_rowid()),
-                  ?, ?, ?, ?, ?, ?)`
+                  ?, ?, ?, ?, ?, ?, ?)`
               ).bind(
                 ledger.id, syncId, userId,
                 tx.txType, tx.amount, happenedAt,
@@ -610,6 +611,7 @@ importRouter.post('/:token/execute', async (c) => {
                 tx.excludeFromBudget != null ? (tx.excludeFromBudget ? 1 : 0) : null,
                 userId, userId,
                 tx.currencyCode ?? null, tx.nativeAmount ?? tx.amount,
+                tx.txType === 'transfer' ? (tx.transferToAmount ?? null) : null,
               ),
             ]);
 

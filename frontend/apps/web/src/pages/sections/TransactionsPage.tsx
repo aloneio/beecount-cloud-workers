@@ -1427,6 +1427,14 @@ export function TransactionsPage() {
       const toAccountName = txForm.to_account_name.trim()
       const categoryName = txForm.category_name.trim()
       const categoryKind = txForm.category_kind
+      const fromCurrency = (txWriteAccounts.find((row) => row.name.trim() === fromAccountName)?.currency || '').toUpperCase()
+      const toCurrency = (txWriteAccounts.find((row) => row.name.trim() === toAccountName)?.currency || '').toUpperCase()
+      const isCrossCurrencyTransfer = Boolean(isTransfer && fromCurrency && toCurrency && fromCurrency !== toCurrency)
+      const transferToAmount = isCrossCurrencyTransfer ? Number(txForm.transfer_to_amount) : null
+      if (isCrossCurrencyTransfer && (!Number.isFinite(transferToAmount) || (transferToAmount ?? 0) <= 0)) {
+        setErrorNotice(t('transactions.error.transferToAmountInvalid'))
+        return false
+      }
       const txTagIds = txForm.tags
         .map((value) => tagByName.get(value.trim().toLowerCase()))
         .filter((value): value is string => Boolean(value))
@@ -1456,6 +1464,7 @@ export function TransactionsPage() {
       const payload = {
         tx_type: txForm.tx_type,
         amount: Number(txForm.amount || 0),
+        transfer_to_amount: isTransfer ? transferToAmount : null,
         happened_at: txForm.happened_at || new Date().toISOString(),
         note: txForm.note || null,
         category_name: isTransfer ? null : categoryName || null,
@@ -1976,6 +1985,7 @@ export function TransactionsPage() {
                     editingOwnerUserId: tx.created_by_user_id || '',
                     tx_type: tx.tx_type,
                     amount: String(tx.amount),
+                    transfer_to_amount: tx.transfer_to_amount != null ? String(tx.transfer_to_amount) : '',
                     happened_at: tx.happened_at,
                     note: tx.note || '',
                     category_name: tx.category_name || '',

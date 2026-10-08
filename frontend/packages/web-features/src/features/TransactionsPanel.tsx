@@ -338,10 +338,21 @@ export function TransactionsPanel({
   }, [categories, form.category_name, form.tx_type])
 
   const isTransfer = form.tx_type === 'transfer'
+  const fromAccount = isTransfer ? accounts.find((row) => row.name.trim() === form.from_account_name.trim()) : undefined
+  const toAccount = isTransfer ? accounts.find((row) => row.name.trim() === form.to_account_name.trim()) : undefined
+  const fromCurrency = (fromAccount?.currency || '').trim().toUpperCase()
+  const toCurrency = (toAccount?.currency || '').trim().toUpperCase()
+  const isCrossCurrencyTransfer = Boolean(isTransfer && fromCurrency && toCurrency && fromCurrency !== toCurrency)
+  const transferToAmountNumber = Number(form.transfer_to_amount)
+  const transferToAmountValid = !isCrossCurrencyTransfer || (Number.isFinite(transferToAmountNumber) && transferToAmountNumber > 0)
+  const transferOutAmountNumber = Number(form.amount)
+  const impliedRate = isCrossCurrencyTransfer && Number.isFinite(transferOutAmountNumber) && transferOutAmountNumber > 0 && transferToAmountValid
+    ? transferToAmountNumber / transferOutAmountNumber
+    : null
   // 非转账允许不选账户（与 mobile 保持一致，tx.accountId 本来就是 nullable）；
   // 转账必须两端都选（否则无法表达方向）。
   const canSubmit = Boolean(writeLedgerId.trim()) && (isTransfer
-    ? Boolean(form.from_account_name.trim()) && Boolean(form.to_account_name.trim())
+    ? Boolean(form.from_account_name.trim()) && Boolean(form.to_account_name.trim()) && transferToAmountValid
     : true)
   const selectedTags = form.tags
   const categoryValue = form.category_name.trim()
@@ -356,6 +367,7 @@ export function TransactionsPanel({
         tx_type: nextType,
         account_name: '',
         currency: '',
+        transfer_to_amount: '',
         category_name: '',
         category_kind: 'transfer',
         exclude_from_stats: false,
@@ -371,6 +383,7 @@ export function TransactionsPanel({
       category_name: keepCategory,
       from_account_name: '',
       to_account_name: '',
+      transfer_to_amount: '',
       // 不计入预算仅 expense 显示;切到 income 时清掉
       exclude_from_budget: nextType === 'expense' ? form.exclude_from_budget : false
     })
@@ -452,7 +465,7 @@ export function TransactionsPanel({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>{t('transactions.table.amount')}</Label>
+              <Label>{isTransfer ? `${t('transactions.transfer.outAmount')}${fromCurrency ? ` (${fromCurrency})` : ''}` : t('transactions.table.amount')}</Label>
               <Input
                 placeholder={t('transactions.placeholder.amount')}
                 value={form.amount}
@@ -537,7 +550,7 @@ export function TransactionsPanel({
                   <Select
                     value={form.from_account_name || undefined}
                     disabled={dictionariesLoading}
-                    onValueChange={(value) => onFormChange({ ...form, from_account_name: value })}
+                    onValueChange={(value) => onFormChange({ ...form, from_account_name: value, transfer_to_amount: '' })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={t('transactions.placeholder.fromAccountName')} />
@@ -561,7 +574,7 @@ export function TransactionsPanel({
                   <Select
                     value={form.to_account_name || undefined}
                     disabled={dictionariesLoading}
-                    onValueChange={(value) => onFormChange({ ...form, to_account_name: value })}
+                    onValueChange={(value) => onFormChange({ ...form, to_account_name: value, transfer_to_amount: '' })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={t('transactions.placeholder.toAccountName')} />
@@ -580,6 +593,22 @@ export function TransactionsPanel({
                     </SelectContent>
                   </Select>
                 </div>
+                {isCrossCurrencyTransfer ? (
+                  <div className="space-y-1">
+                    <Label>{`${t('transactions.transfer.inAmount')} (${toCurrency})`}</Label>
+                    <Input
+                      inputMode="decimal"
+                      value={form.transfer_to_amount}
+                      onChange={(e) => onFormChange({ ...form, transfer_to_amount: e.target.value })}
+                      placeholder={t('transactions.transfer.inAmount')}
+                    />
+                    {impliedRate != null ? (
+                      <p className="text-xs text-muted-foreground">
+                        {t('transactions.transfer.impliedRate')} 1 {fromCurrency} = {impliedRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} {toCurrency}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             ) : (
               <div className="space-y-1">

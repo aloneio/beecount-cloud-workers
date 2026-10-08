@@ -5,6 +5,8 @@ export type TxForm = {
   editingOwnerUserId: string
   tx_type: 'expense' | 'income' | 'transfer'
   amount: string
+  /** 跨币种转账的转入端金额；同币种转账留空并回退 amount。 */
+  transfer_to_amount: string
   happened_at: string
   note: string
   category_name: string
@@ -97,6 +99,7 @@ export const txDefaults = (): TxForm => ({
   editingOwnerUserId: '',
   tx_type: 'expense',
   amount: '',
+  transfer_to_amount: '',
   happened_at: new Date().toISOString(),
   note: '',
   category_name: '',

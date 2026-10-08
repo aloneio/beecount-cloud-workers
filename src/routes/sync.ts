@@ -1975,7 +1975,7 @@ async function applyChangeToProjection(
            account_sync_id, account_name, from_account_sync_id, from_account_name,
            to_account_sync_id, to_account_name, tags_csv, tag_sync_ids_json, attachments_json,
            tx_index, created_by_user_id, last_edited_by_user_id,
-           exclude_from_stats, exclude_from_budget, currency_code, native_amount
+           exclude_from_stats, exclude_from_budget, currency_code, native_amount, transfer_to_amount
            FROM read_tx_projection WHERE ledger_id = ? AND sync_id = ?`
         ).bind(ledgerId, change.entity_sync_id).first<Record<string, unknown>>();
 
@@ -2003,6 +2003,9 @@ async function applyChangeToProjection(
           exclude_from_budget: (payload as any).excludeFromBudget ?? existingTx?.exclude_from_budget ?? 0,
           currency_code: (payload as any).currencyCode ?? existingTx?.currency_code ?? null,
           native_amount: (payload as any).nativeAmount ?? existingTx?.native_amount ?? null,
+          transfer_to_amount: ((payload as any).type ?? payload.tx_type ?? payload.txType ?? existingTx?.tx_type) === 'transfer'
+            ? ((payload as any).transferToAmount ?? (payload as any).transfer_to_amount ?? existingTx?.transfer_to_amount ?? null)
+            : null,
         };
 
         // 与原版 _sync_native_amount_after_merge 对齐：amount 改变时等比缩放 nativeAmount
@@ -2029,9 +2032,9 @@ async function applyChangeToProjection(
               to_account_sync_id, to_account_name,
               tags_csv, tag_sync_ids_json, attachments_json, tx_index,
               created_by_user_id, last_edited_by_user_id, source_change_id,
-              currency_code, native_amount,
+              currency_code, native_amount, transfer_to_amount,
               exclude_from_stats, exclude_from_budget)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             ledgerId,
@@ -2059,6 +2062,7 @@ async function applyChangeToProjection(
             change.change_id,
             txMerged.currency_code,
             txMerged.native_amount,
+            txMerged.transfer_to_amount,
             txMerged.exclude_from_stats ? 1 : 0,
             txMerged.exclude_from_budget ? 1 : 0,
           )
