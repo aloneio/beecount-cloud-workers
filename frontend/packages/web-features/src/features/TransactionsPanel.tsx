@@ -474,17 +474,64 @@ export function TransactionsPanel({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label>{isTransfer ? `${t('transactions.transfer.outAmount')}${fromCurrency ? ` (${fromCurrency})` : ''}` : t('transactions.table.amount')}</Label>
-              <Input
-                placeholder={t('transactions.placeholder.amount')}
-                value={form.amount}
-                onChange={(e) => onFormChange({ ...form, amount: e.target.value })}
-              />
-              {/* v30 多币种:币种另起一行,全宽显示币种全名+国旗(挨金额太窄会截断);
-                  选非本位币 → 账户下拉按币种过滤 + 已选账户清空(币种优先联动,
-                  transfer 不支持)。 */}
-              {form.tx_type !== 'transfer' ? (
+            {isTransfer ? (
+              <>
+                <div className="space-y-1">
+                  <Label>{t('transactions.transfer.currencyMode')}</Label>
+                  <Select
+                    value={form.transfer_currency_mode}
+                    onValueChange={(value) =>
+                      onFormChange({
+                        ...form,
+                        transfer_currency_mode: value as TxForm['transfer_currency_mode'],
+                        to_account_name: '',
+                        transfer_to_amount: ''
+                      })
+                    }
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="same">{t('transactions.transfer.sameCurrency')}</SelectItem>
+                      <SelectItem value="different">{t('transactions.transfer.differentCurrency')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="md:col-span-2 grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label>{`${t('transactions.transfer.outAmount')}${fromCurrency ? ` (${fromCurrency})` : ''}`}</Label>
+                    <Input
+                      inputMode="decimal"
+                      placeholder={t('transactions.transfer.outAmount')}
+                      value={form.amount}
+                      onChange={(e) => onFormChange({ ...form, amount: e.target.value })}
+                    />
+                  </div>
+                  {isDifferentCurrencyTransfer ? (
+                    <div className="space-y-1">
+                      <Label>{`${t('transactions.transfer.inAmount')}${toCurrency ? ` (${toCurrency})` : ''}`}</Label>
+                      <Input
+                        inputMode="decimal"
+                        value={form.transfer_to_amount}
+                        onChange={(e) => onFormChange({ ...form, transfer_to_amount: e.target.value })}
+                        placeholder={t('transactions.transfer.inAmount')}
+                      />
+                      {impliedRate != null ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t('transactions.transfer.impliedRate')} 1 {fromCurrency} = {impliedRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} {toCurrency}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-1">
+                <Label>{t('transactions.table.amount')}</Label>
+                <Input
+                  placeholder={t('transactions.placeholder.amount')}
+                  value={form.amount}
+                  onChange={(e) => onFormChange({ ...form, amount: e.target.value })}
+                />
                 <CurrencySelectorTrigger
                   value={form.currency || baseCurrency}
                   onChange={(code) =>
@@ -500,8 +547,8 @@ export function TransactionsPanel({
                   ratesToBase={currencyRates}
                   rateBase={baseCurrency}
                 />
-              ) : null}
-            </div>
+              </div>
+            )}
             <div className="space-y-1">
               <Label>{t('transactions.table.time')}</Label>
               <Input
@@ -556,26 +603,6 @@ export function TransactionsPanel({
             {isTransfer ? (
               <>
                 <div className="space-y-1">
-                  <Label>{t('transactions.transfer.currencyMode')}</Label>
-                  <Select
-                    value={form.transfer_currency_mode}
-                    onValueChange={(value) =>
-                      onFormChange({
-                        ...form,
-                        transfer_currency_mode: value as TxForm['transfer_currency_mode'],
-                        to_account_name: '',
-                        transfer_to_amount: ''
-                      })
-                    }
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="same">{t('transactions.transfer.sameCurrency')}</SelectItem>
-                      <SelectItem value="different">{t('transactions.transfer.differentCurrency')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
                   <Label>{t('transactions.placeholder.fromAccountName')}</Label>
                   <Select
                     value={form.from_account_name || undefined}
@@ -623,22 +650,6 @@ export function TransactionsPanel({
                     </SelectContent>
                   </Select>
                 </div>
-                {isDifferentCurrencyTransfer ? (
-                  <div className="space-y-1">
-                    <Label>{`${t('transactions.transfer.inAmount')}${toCurrency ? ` (${toCurrency})` : ''}`}</Label>
-                    <Input
-                      inputMode="decimal"
-                      value={form.transfer_to_amount}
-                      onChange={(e) => onFormChange({ ...form, transfer_to_amount: e.target.value })}
-                      placeholder={t('transactions.transfer.inAmount')}
-                    />
-                    {impliedRate != null ? (
-                      <p className="text-xs text-muted-foreground">
-                        {t('transactions.transfer.impliedRate')} 1 {fromCurrency} = {impliedRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} {toCurrency}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
               </>
             ) : (
               <div className="space-y-1">

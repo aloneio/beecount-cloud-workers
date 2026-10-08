@@ -444,8 +444,8 @@ export function GlobalEditDialogs() {
       page={1}
       pageSize={20}
       accounts={editTxAccounts.filter((a) => {
-        // 币种优先联动:账户下拉只显示「表单所选币种(默认=账本主币种)」的
-        // 账户,防止选出币种与账户不一致的组合(与 TransactionsPage 同规则)
+        // transfer 的币种由转出/转入账户决定；跨币种时必须能看到所有币种账户。
+        if (editTxForm.tx_type === 'transfer') return true
         const wanted = (editTxForm.currency || editTxBase).toUpperCase()
         return ((a.currency || 'CNY').trim().toUpperCase()) === wanted
       })}

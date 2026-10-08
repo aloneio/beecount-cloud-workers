@@ -523,14 +523,16 @@ export function TransactionsPage() {
     const source =
       txIsSharedEditor && sharedBundle ? sharedAsRead.accounts : txDictionaryAccounts
     return source.filter((row) => {
-      const currency = (row.currency || 'CNY').trim().toUpperCase()
-      if (currency !== txFormCurrency) return false
       if (VALUATION_ACCOUNT_TYPES.has(row.account_type || '')) return false
-      return true
+      // transfer 的币种由两端账户决定，不能先按账本/表单币种裁掉其它钱包。
+      if (txForm.tx_type === 'transfer') return true
+      const currency = (row.currency || 'CNY').trim().toUpperCase()
+      return currency === txFormCurrency
     })
   }, [
     txDictionaryAccounts,
     txFormCurrency,
+    txForm.tx_type,
     VALUATION_ACCOUNT_TYPES,
     txIsSharedEditor,
     sharedBundle,
