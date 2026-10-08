@@ -67,4 +67,21 @@ describe('read 投影重建账户字段规范化（真实 SQLite）', () => {
     expect(e.to_account_sync_id).toBeNull();
     expect(e.to_account_name).toBeNull();
   });
+  it('account_sync_id 精确筛选同时返回账户自身的 transfer 流水', async () => {
+    seedChange('tx-transfer-filter', {
+      tx_type: 'transfer', amount: 200, happened_at: '2025-01-15T12:00:00.000Z',
+      fromAccountId: 'bitget', fromAccountName: 'Bitget',
+      toAccountId: 'wallet', toAccountName: 'BitgetWallet',
+    });
+    seedChange('tx-unrelated', {
+      tx_type: 'expense', amount: 5, happened_at: '2025-01-15T13:00:00.000Z',
+      accountId: 'wallet', accountName: 'BitgetWallet',
+    });
+
+    const res = await app.request('/api/v1/read/workspace/transactions?ledger_id=ledger-1&account_sync_id=bitget', {}, { DB: db });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { items: Array<{ sync_id: string }> };
+    expect(body.items.map((item) => item.sync_id)).toEqual(['tx-transfer-filter']);
+  });
+
 });

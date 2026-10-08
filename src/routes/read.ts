@@ -542,8 +542,10 @@ readRouter.get('/workspace/transactions', async (c) => {
     bindings.push(categorySyncId);
   }
   if (accountSyncId) {
-    query += ' AND rt.account_sync_id = ?';
-    bindings.push(accountSyncId);
+    // Account detail must include both ordinary transactions and transfers.
+    // Transfers deliberately keep account_sync_id NULL and use from/to account ids.
+    query += ' AND (rt.account_sync_id = ? OR rt.from_account_sync_id = ? OR rt.to_account_sync_id = ?)';
+    bindings.push(accountSyncId, accountSyncId, accountSyncId);
   }
   if (amountMin !== null) {
     query += ' AND rt.amount >= ?';
