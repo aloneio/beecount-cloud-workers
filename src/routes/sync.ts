@@ -27,7 +27,7 @@ import { randomUUID } from 'crypto';
 import { insertAuditLog } from '../lib/audit';
 import { deleteFromStorage } from '../lib/storage-adapter';
 
-const CODE_VERSION = 'v1.8-category-hierarchy-integrity';
+const CODE_VERSION = 'v1.7-category-integrity';
 
 // ===========================
 // Snapshot Cache（与原版 snapshot_cache 对齐）
