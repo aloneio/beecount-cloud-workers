@@ -224,7 +224,118 @@ describe('Sync - Pull', () => {
     });
     expect(pullRes.status).toBe(200);
     const body = await pullRes.json() as any;
-    expect(body.changes.some((c: any) => c.entity_sync_id === txSyncId)).toBe(true);
+    const replayed = body.changes.find((c: any) => c.entity_sync_id === txSyncId);
+    expect(replayed).toBeDefined();
+    expect(replayed.updated_by_device_id).toBeNull();
+  });
+
+  it('should keep same-device history replayable after the first page cursor advances', async () => {
+    const txSyncId = crypto.randomUUID();
+    await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: ledgerId, entity_type: 'transaction', entity_sync_id: txSyncId, action: 'upsert',
+        payload: { type: 'expense', amount: 1, happenedAt: '2025-01-15T10:30:00.000Z' },
+        updated_at: new Date().toISOString(),
+      }] }),
+    });
+    const stored = getTable(env.db, 'sync_changes').find((row: any) => row.entity_sync_id === txSyncId);
+    const storedChangeId = Number(stored?.change_id ?? 0);
+    expect(storedChangeId).toBeGreaterThan(1);
+    const pullRes = await env.app.request(`/api/v1/sync/pull?device_id=${TEST_DEVICE_ID}&since=${storedChangeId - 1}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(pullRes.status).toBe(200);
+    const body = await pullRes.json() as any;
+    const replayed = body.changes.find((c: any) => c.entity_sync_id === txSyncId);
+    expect(replayed).toBeDefined();
+    expect(replayed.updated_by_device_id).toBeNull();
+  });
+
+  it('should compensate cross-currency transfer destination balances for the mobile account model', async () => {
+    const fromId = crypto.randomUUID();
+    const toId = crypto.randomUUID();
+    const txId = crypto.randomUUID();
+    const now = Date.now();
+    const accountsPush = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [
+        { ledger_id: '__user_global__', entity_type: 'account', entity_sync_id: fromId, action: 'upsert', payload: { name: 'USD source', type: 'bank_card', currency: 'USD', initialBalance: 0 }, updated_at: new Date(now).toISOString() },
+        { ledger_id: '__user_global__', entity_type: 'account', entity_sync_id: toId, action: 'upsert', payload: { name: 'CNY destination', type: 'alipay', currency: 'CNY', initialBalance: 0, sortOrder: 9 }, updated_at: new Date(now + 1).toISOString() },
+      ] }),
+    });
+    expect(accountsPush.status).toBe(200);
+    const txPush = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: ledgerId, entity_type: 'transaction', entity_sync_id: txId, action: 'upsert',
+        payload: { type: 'transfer', amount: 30.37, transferToAmount: 200, fromAccountId: fromId, fromAccountName: 'USD source', toAccountId: toId, toAccountName: 'CNY destination', happenedAt: '2026-10-03T00:46:00.000Z' },
+        updated_at: new Date(now + 2).toISOString(),
+      }] }),
+    });
+    expect(txPush.status).toBe(200);
+
+    const pullRes = await env.app.request(`/api/v1/sync/pull?device_id=${TEST_DEVICE_ID}&since=0`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(pullRes.status).toBe(200);
+    const body = await pullRes.json() as any;
+    const toAccount = body.changes.filter((c: any) => c.entity_type === 'account' && c.entity_sync_id === toId).at(-1);
+    const transfer = body.changes.find((c: any) => c.entity_sync_id === txId);
+    expect(toAccount).toBeDefined();
+    expect(transfer).toBeDefined();
+    expect(toAccount.payload.initialBalance).toBeCloseTo(169.63, 6);
+    expect(toAccount.payload.sortOrder).toBe(9);
+    expect(toAccount.payload.initialBalance + transfer.payload.amount).toBeCloseTo(200, 6);
+
+    const canonicalBefore = getTable(env.db, 'user_account_projection').find((row: any) => row.sync_id === toId);
+    expect(Number(canonicalBefore?.initial_balance)).toBeCloseTo(0, 6);
+
+    const renamePush = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: '__user_global__', entity_type: 'account', entity_sync_id: toId, action: 'upsert',
+        payload: { name: 'CNY destination renamed', type: 'alipay', currency: 'CNY', initialBalance: 169.63 },
+        updated_at: new Date(now + 3000).toISOString(),
+      }] }),
+    });
+    expect(renamePush.status).toBe(200);
+    const canonicalAfter = getTable(env.db, 'user_account_projection').find((row: any) => row.sync_id === toId);
+    expect(Number(canonicalAfter?.initial_balance)).toBeCloseTo(0, 6);
+    expect(canonicalAfter?.name).toBe('CNY destination renamed');
+  });
+
+  it('should send valuation-only accounts with their server current value as mobile initialBalance', async () => {
+    const sourceId = crypto.randomUUID();
+    const investmentId = crypto.randomUUID();
+    const txId = crypto.randomUUID();
+    const now = Date.now();
+    await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [
+        { ledger_id: '__user_global__', entity_type: 'account', entity_sync_id: sourceId, action: 'upsert', payload: { name: 'EUR source', type: 'bank_card', currency: 'EUR', initialBalance: 1210 }, updated_at: new Date(now).toISOString() },
+        { ledger_id: '__user_global__', entity_type: 'account', entity_sync_id: investmentId, action: 'upsert', payload: { name: 'Broker', type: 'investment', currency: 'USD', initialBalance: 0 }, updated_at: new Date(now + 1).toISOString() },
+      ] }),
+    });
+    await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: ledgerId, entity_type: 'transaction', entity_sync_id: txId, action: 'upsert',
+        payload: { type: 'transfer', amount: 1210, transferToAmount: 1350.31, fromAccountId: sourceId, fromAccountName: 'EUR source', toAccountId: investmentId, toAccountName: 'Broker', happenedAt: '2026-10-03T23:46:00.000Z' },
+        updated_at: new Date(now + 2).toISOString(),
+      }] }),
+    });
+
+    const pullRes = await env.app.request(`/api/v1/sync/pull?device_id=${TEST_DEVICE_ID}&since=0`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(pullRes.status).toBe(200);
+    const body = await pullRes.json() as any;
+    const investment = body.changes.filter((c: any) => c.entity_type === 'account' && c.entity_sync_id === investmentId).at(-1);
+    expect(investment).toBeDefined();
+    expect(investment.payload.initialBalance).toBeCloseTo(1350.31, 6);
+    const canonical = getTable(env.db, 'user_account_projection').find((row: any) => row.sync_id === investmentId);
+    expect(Number(canonical?.initial_balance)).toBeCloseTo(0, 6);
   });
 
   it('should return empty when no new changes', async () => {

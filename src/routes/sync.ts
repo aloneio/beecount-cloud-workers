@@ -27,7 +27,7 @@ import { randomUUID } from 'crypto';
 import { insertAuditLog } from '../lib/audit';
 import { deleteFromStorage } from '../lib/storage-adapter';
 
-const CODE_VERSION = 'v1.4-full-pull-recovery';
+const CODE_VERSION = 'v1.5-mobile-account-balance-compat';
 
 // ===========================
 // Snapshot Cache（与原版 snapshot_cache 对齐）
@@ -123,6 +123,156 @@ function convertBooleans<T extends Record<string, unknown>>(row: T): T {
 
 function isUserGlobalType(entityType: string): boolean {
   return USER_GLOBAL_TYPES.includes(entityType);
+}
+
+const MOBILE_ACCOUNT_BALANCE_COMPAT_CURSOR = '__mobile_account_balance_compat_v1__';
+const VALUATION_ONLY_ACCOUNT_TYPES = new Set([
+  'real_estate', 'vehicle', 'investment', 'insurance', 'social_fund', 'loan',
+]);
+
+type MobileAccountState = {
+  sync_id: string;
+  name: string | null;
+  account_type: string | null;
+  currency: string | null;
+  initial_balance: number | null;
+  note: string | null;
+  credit_limit: number | null;
+  billing_day: number | null;
+  payment_due_day: number | null;
+  bank_name: string | null;
+  card_last_four: string | null;
+  hidden: number | null;
+  source_change_id: number | null;
+  sort_order: number | null;
+  server_net: number | null;
+  app_net: number | null;
+};
+
+function accountMobileOffset(state: MobileAccountState, accountType = state.account_type): number {
+  const serverNet = Number(state.server_net ?? 0);
+  const appNet = VALUATION_ONLY_ACCOUNT_TYPES.has(accountType ?? '') ? 0 : Number(state.app_net ?? 0);
+  return serverNet - appNet;
+}
+
+function accountPayloadForMobile(state: MobileAccountState): Record<string, unknown> {
+  const type = state.account_type ?? 'cash';
+  const canonicalInitial = Number(state.initial_balance ?? 0);
+  return {
+    name: state.name ?? '',
+    type,
+    accountType: type,
+    currency: state.currency ?? 'CNY',
+    initialBalance: canonicalInitial + accountMobileOffset(state, type),
+    sortOrder: Number(state.sort_order ?? 0),
+    creditLimit: state.credit_limit ?? null,
+    billingDay: state.billing_day ?? null,
+    paymentDueDay: state.payment_due_day ?? null,
+    bankName: state.bank_name ?? null,
+    cardLastFour: state.card_last_four ?? null,
+    note: state.note ?? null,
+    hidden: Boolean(state.hidden),
+  };
+}
+
+async function loadMobileAccountStates(db: D1Database, userId: string): Promise<Map<string, MobileAccountState>> {
+  const accounts = await db.prepare(`
+    SELECT sync_id, name, account_type, currency, initial_balance, note,
+           credit_limit, billing_day, payment_due_day, bank_name, card_last_four,
+           hidden, source_change_id
+    FROM user_account_projection WHERE user_id = ?
+  `).bind(userId).all<Omit<MobileAccountState, 'server_net' | 'app_net'>>();
+
+  const accountEvents = await db.prepare(`
+    SELECT entity_sync_id, payload_json
+    FROM sync_changes
+    WHERE user_id = ? AND entity_type = 'account' AND action = 'upsert'
+    ORDER BY change_id ASC
+  `).bind(userId).all<{ entity_sync_id: string; payload_json: string }>();
+
+  const txs = await db.prepare(`
+    SELECT tx_type, amount, transfer_to_amount, account_sync_id,
+           from_account_sync_id, to_account_sync_id
+    FROM read_tx_projection WHERE user_id = ?
+  `).bind(userId).all<{
+    tx_type: string; amount: number | null; transfer_to_amount: number | null;
+    account_sync_id: string | null; from_account_sync_id: string | null; to_account_sync_id: string | null;
+  }>();
+
+  const states = new Map<string, MobileAccountState>();
+  for (const account of accounts.results) {
+    states.set(account.sync_id, { ...account, sort_order: null, server_net: 0, app_net: 0 });
+  }
+
+  // sortOrder 目前不在 server projection schema 中；从账户同步历史提取最后一次
+  // 明确提供的值，避免兼容余额刷新把 App 本地排序重置为 0。
+  for (const event of accountEvents.results) {
+    const state = states.get(event.entity_sync_id);
+    if (!state) continue;
+    try {
+      const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
+      const rawSort = payload.sortOrder ?? payload.sort_order;
+      if (rawSort !== undefined && rawSort !== null && Number.isFinite(Number(rawSort))) {
+        state.sort_order = Number(rawSort);
+      }
+    } catch { /* malformed historical payload is ignored; sync audit handles invalid JSON */ }
+  }
+
+  for (const tx of txs.results) {
+    const amount = Number(tx.amount ?? 0);
+    if (tx.tx_type === 'income' && tx.account_sync_id) {
+      const state = states.get(tx.account_sync_id);
+      if (state) { state.server_net = Number(state.server_net ?? 0) + amount; state.app_net = Number(state.app_net ?? 0) + amount; }
+    } else if (tx.tx_type === 'expense' && tx.account_sync_id) {
+      const state = states.get(tx.account_sync_id);
+      if (state) { state.server_net = Number(state.server_net ?? 0) - amount; state.app_net = Number(state.app_net ?? 0) - amount; }
+    } else if (tx.tx_type === 'transfer') {
+      if (tx.from_account_sync_id) {
+        const from = states.get(tx.from_account_sync_id);
+        if (from) { from.server_net = Number(from.server_net ?? 0) - amount; from.app_net = Number(from.app_net ?? 0) - amount; }
+      }
+      if (tx.to_account_sync_id) {
+        const to = states.get(tx.to_account_sync_id);
+        if (to) {
+          to.server_net = Number(to.server_net ?? 0) + Number(tx.transfer_to_amount ?? amount);
+          to.app_net = Number(to.app_net ?? 0) + amount;
+        }
+      }
+    }
+  }
+
+  return states;
+}
+
+async function hasMobileAccountBalanceCompat(db: D1Database, userId: string, deviceId: string): Promise<boolean> {
+  const row = await db.prepare(
+    'SELECT ledger_external_id FROM sync_cursors WHERE user_id = ? AND device_id = ? AND ledger_external_id = ? LIMIT 1'
+  ).bind(userId, deviceId, MOBILE_ACCOUNT_BALANCE_COMPAT_CURSOR).first<{ ledger_external_id: string }>();
+  return row?.ledger_external_id === MOBILE_ACCOUNT_BALANCE_COMPAT_CURSOR;
+}
+
+async function markMobileAccountBalanceCompat(db: D1Database, userId: string, deviceId: string): Promise<void> {
+  const now = nowUtc();
+  const existing = await db.prepare(
+    'SELECT id FROM sync_cursors WHERE user_id = ? AND device_id = ? AND ledger_external_id = ? LIMIT 1'
+  ).bind(userId, deviceId, MOBILE_ACCOUNT_BALANCE_COMPAT_CURSOR).first<{ id: number }>();
+  if (existing?.id != null) {
+    await db.prepare('UPDATE sync_cursors SET last_cursor = 1, updated_at = ? WHERE id = ?')
+      .bind(now, existing.id).run();
+    return;
+  }
+  try {
+    await db.prepare(`
+      INSERT INTO sync_cursors (user_id, device_id, ledger_external_id, last_cursor, updated_at)
+      VALUES (?, ?, ?, 1, ?)
+    `).bind(userId, deviceId, MOBILE_ACCOUNT_BALANCE_COMPAT_CURSOR, now).run();
+  } catch {
+    // 并发 pull 可能同时首建 marker；唯一键冲突后再更新即可。
+    await db.prepare(`
+      UPDATE sync_cursors SET last_cursor = 1, updated_at = ?
+      WHERE user_id = ? AND device_id = ? AND ledger_external_id = ?
+    `).bind(now, userId, deviceId, MOBILE_ACCOUNT_BALANCE_COMPAT_CURSOR).run();
+  }
 }
 
 /**
@@ -490,6 +640,18 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
     const userGlobalChanges = changes.filter(c => USER_GLOBAL_TYPES.includes(c.entity_type));
     const userGlobalPreloaded = await preloadUserGlobalProjections(db, userId, userGlobalChanges.map(c => ({ entity_type: c.entity_type, entity_sync_id: c.entity_sync_id })));
 
+    // App 为兼容跨币种转账/估值账户，会收到一个移动端专用 initialBalance。
+    // 只有已经成功收到过该兼容格式的 device 才做反向还原，避免旧客户端
+    // 在第一次兼容 pull 之前编辑账户时把原始 canonical baseline 误减一次。
+    const hasAccountBalancePayload = changes.some((c) =>
+      c.entity_type === 'account' && c.action === 'upsert' && c.payload &&
+      (Object.prototype.hasOwnProperty.call(c.payload, 'initialBalance') || Object.prototype.hasOwnProperty.call(c.payload, 'initial_balance'))
+    );
+    const accountStatesForPush = hasAccountBalancePayload ? await loadMobileAccountStates(db, userId) : new Map<string, MobileAccountState>();
+    const deviceUsesAccountBalanceCompat = hasAccountBalancePayload && deviceId !== 'unknown'
+      ? await hasMobileAccountBalanceCompat(db, userId, deviceId)
+      : false;
+
     // 冲突审计日志收集器：批量执行替代逐条 INSERT，避免超 api_limit
     const conflictAuditStmts: any[] = [];
 
@@ -630,6 +792,31 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
 
         // 注入 createdByUserId / updatedByUserId（与原版 §7 对齐）
         let payloadForStorage = change.payload;
+
+        // App 端账户余额兼容值只存在于同步协议边界，D1 projection 永远保存
+        // canonical initial_balance。已进入 compat 模式的 device 回传账户时，
+        // 把移动端 initialBalance 反向还原；若值恰好仍等于当前 canonical
+        // baseline，则按旧客户端/丢包场景处理，不重复扣 offset。
+        if (change.entity_type === 'account' && typeof payloadForStorage === 'object' && payloadForStorage !== null) {
+          const p = { ...payloadForStorage } as Record<string, unknown>;
+          const rawInitial = p.initialBalance ?? p.initial_balance;
+          const state = accountStatesForPush.get(change.entity_sync_id);
+          if (rawInitial !== undefined && state && deviceUsesAccountBalanceCompat) {
+            const incoming = Number(rawInitial);
+            const canonicalNow = Number(state.initial_balance ?? 0);
+            if (Number.isFinite(incoming) && Math.abs(incoming - canonicalNow) > 1e-9) {
+              // incoming initialBalance 是按客户端当前保存的旧账户类型计算出来的。
+              // 即使这次 payload 同时改了 type，也必须先按旧类型反解，否则跨
+              // tradable/valuation 切换会把 canonical baseline 算偏。
+              const canonical = incoming - accountMobileOffset(state, state.account_type);
+              p.initialBalance = canonical;
+              if (Object.prototype.hasOwnProperty.call(p, 'initial_balance')) p.initial_balance = canonical;
+            }
+          }
+          payloadForStorage = p;
+          change.payload = p;
+        }
+
         if (change.entity_type === 'transaction' && typeof payloadForStorage === 'object' && payloadForStorage !== null) {
           const p = { ...payloadForStorage } as Record<string, unknown>;
           if (!p.updatedByUserId) p.updatedByUserId = userId;
@@ -1143,14 +1330,10 @@ syncRouter.get('/pull', async (c) => {
       params.push(ledgerId);
     }
 
-    // 增量同步时继续过滤设备自身刚提交的变更，避免重复回声。
-    // 但 since=0 表示客户端正在做全量/恢复重建：此时必须返回完整历史。
-    // 如果仍过滤 updated_by_device_id == 当前设备，本地数据库清空后会永久漏掉
-    // 该设备过去上传的账户、分类和交易，最终造成 App 与 Web projection 不一致。
-    if (deviceId && since > 0) {
-      query += ' AND (c.updated_by_device_id IS NULL OR c.updated_by_device_id != ?)';
-      params.push(deviceId);
-    }
+    // 不在 SQL 层过滤当前设备的 change。当前 App 自身也会按
+    // updatedByDeviceId 跳过 echo；而 replayAllChanges() 是多页 since 游标，
+    // 第二页开始 since > 0，如果服务端继续过滤就会永久漏掉本设备历史。
+    // 响应阶段仅对“当前设备自己的 change”隐藏 device id，使恢复重放真正幂等应用。
     
     query += ' ORDER BY c.change_id ASC LIMIT ?';
     params.push(limit + 1);
@@ -1184,6 +1367,61 @@ syncRouter.get('/pull', async (c) => {
       await enrichTxPayloadsWithUserIds(db, limitedResults);
     } catch (err) {
       serverLogger.error('src.routers.sync', '[SYNC] /sync/pull enrichTxPayloads error (non-fatal):', err);
+    }
+
+    // BeeCount App 的本地余额模型有两个固定限制：
+    // 1) 跨币种 transfer 的转入侧仍加 `amount`，不识别 transferToAmount；
+    // 2) 估值账户(investment 等)直接把 initialBalance 当当前估值，不累计交易。
+    // 服务端 projection 保持 canonical 数据，只在同步响应边界重写账户 initialBalance，
+    // 让 App 本地算法最终得到与 Web/服务端一致的当前余额。
+    const hasAccountChange = limitedResults.some((r) => r.entity_type === 'account' && r.action === 'upsert');
+    const hasTransactionChange = limitedResults.some((r) => r.entity_type === 'transaction');
+    let accountBalanceCompatApplied = false;
+    if (hasAccountChange || hasTransactionChange) {
+      const mobileStates = await loadMobileAccountStates(db, userId);
+      if (mobileStates.size > 0) {
+        for (const row of limitedResults) {
+          if (row.entity_type !== 'account' || row.action !== 'upsert') continue;
+          const state = mobileStates.get(row.entity_sync_id);
+          if (!state) continue;
+          row.payload_json = safeJsonStringify(accountPayloadForMobile(state));
+          accountBalanceCompatApplied = true;
+        }
+
+        // 任何交易变化都可能改变账户余额，尤其是跨币种 transfer 或估值账户。
+        // 附加当前账户快照，不写 sync_changes、不改变 server_cursor；App 按 syncId
+        // upsert，所以只是刷新账户基线，不会制造重复实体。
+        if (hasTransactionChange) {
+          const alreadyRefreshed = new Set(
+            limitedResults
+              .filter((r) => r.entity_type === 'account' && r.action === 'upsert')
+              .map((r) => r.entity_sync_id),
+          );
+          const syntheticChangeId = serverCursor;
+          const syntheticUpdatedAt = limitedResults.length > 0
+            ? limitedResults[limitedResults.length - 1].updated_at
+            : nowUtc();
+          for (const state of mobileStates.values()) {
+            if (alreadyRefreshed.has(state.sync_id)) continue;
+            limitedResults.push({
+              change_id: syntheticChangeId,
+              entity_type: 'account',
+              entity_sync_id: state.sync_id,
+              action: 'upsert',
+              payload_json: safeJsonStringify(accountPayloadForMobile(state)),
+              updated_at: syntheticUpdatedAt,
+              ledger_id: null,
+              updated_by_device_id: null,
+              scope: 'user',
+            });
+          }
+          accountBalanceCompatApplied = true;
+        }
+      }
+    }
+
+    if (deviceId && accountBalanceCompatApplied) {
+      await markMobileAccountBalanceCompat(db, userId, deviceId);
     }
 
     const resultTypeCounts: Record<string, number> = {};
@@ -1226,7 +1464,7 @@ syncRouter.get('/pull', async (c) => {
           action: c.action,
           payload,
           updated_at: c.updated_at,
-          updated_by_device_id: c.updated_by_device_id ?? null,
+          updated_by_device_id: deviceId && c.updated_by_device_id === deviceId ? null : (c.updated_by_device_id ?? null),
           scope: c.scope || 'ledger',
         };
       }),
