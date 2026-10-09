@@ -758,6 +758,42 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
           const incomingLevel = Number(categoryPayload?.level ?? 1);
           const parentSyncId = typeof categoryPayload?.parentSyncId === 'string' ? categoryPayload.parentSyncId.trim() : '';
           const parentName = typeof categoryPayload?.parentName === 'string' ? categoryPayload.parentName.trim() : '';
+
+          if (incomingLevel === 2 && parentSyncId) {
+            const parent = await db.prepare(
+              'SELECT sync_id, name, kind FROM user_category_projection WHERE user_id = ? AND sync_id = ? AND level = 1 LIMIT 1'
+            ).bind(userId, parentSyncId).first<{ sync_id: string; name: string; kind: string }>();
+            const incomingKind = String(categoryPayload?.kind ?? 'expense');
+            if (!parent || parent.kind !== incomingKind) {
+              rejected++;
+              conflictCount++;
+              const conflictSample = {
+                reason: 'invalid_category_parent_reference_rejected',
+                ledgerId: change.ledger_id,
+                entityType: change.entity_type,
+                entitySyncId: change.entity_sync_id,
+                existingChangeId: latestChange?.change_id ?? null,
+              };
+              if (conflictList.length < 20) conflictList.push(conflictSample);
+              serverLogger.info('src.routers.sync', '[SYNC] REJECTED - invalid category parent reference:', change.entity_sync_id, parentSyncId);
+              conflictAuditStmts.push(
+                db.prepare(
+                  `INSERT INTO audit_logs (user_id, ledger_id, action, metadata_json)
+                   VALUES (?, ?, 'sync_push', ?)`
+                ).bind(
+                  userId, null,
+                  safeJsonStringify({ entityType: 'sync_conflict', entityId: null, details: conflictSample, level: 'INFO', logger: null }),
+                ),
+              );
+              continue;
+            }
+            change.payload = {
+              ...(categoryPayload ?? {}),
+              parentSyncId: parent.sync_id,
+              parentName: parent.name,
+            };
+          }
+
           if (incomingLevel === 2 && !parentSyncId && !parentName) {
             rejected++;
             conflictCount++;
