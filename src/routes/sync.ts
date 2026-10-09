@@ -27,7 +27,7 @@ import { randomUUID } from 'crypto';
 import { insertAuditLog } from '../lib/audit';
 import { deleteFromStorage } from '../lib/storage-adapter';
 
-const CODE_VERSION = 'v1.6-tombstone-dominance';
+const CODE_VERSION = 'v1.7-category-integrity';
 
 // ===========================
 // Snapshot Cache（与原版 snapshot_cache 对齐）
@@ -723,6 +723,37 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
         }
 
         const latestChange = existingChangeMap.get(key);
+
+        // Category integrity guard: category.name 是必填业务字段。旧 App 在
+        // 分类清理/重放后可能把本地占位分类（name="", kind=expense, level=1）
+        // 通过 legacy backfill 重新 push，若接受会覆盖正确的分类元数据并让历史
+        // 交易在 App 中全部显示成默认/空分类。空名称 upsert 一律拒绝。
+        if (change.entity_type === 'category' && change.action === 'upsert') {
+          const rawName = (change.payload as Record<string, unknown> | null | undefined)?.name;
+          if (typeof rawName !== 'string' || rawName.trim().length === 0) {
+            rejected++;
+            conflictCount++;
+            const conflictSample = {
+              reason: 'invalid_category_name_rejected',
+              ledgerId: change.ledger_id,
+              entityType: change.entity_type,
+              entitySyncId: change.entity_sync_id,
+              existingChangeId: latestChange?.change_id ?? null,
+            };
+            if (conflictList.length < 20) conflictList.push(conflictSample);
+            serverLogger.info('src.routers.sync', '[SYNC] REJECTED - invalid empty category name:', change.entity_sync_id);
+            conflictAuditStmts.push(
+              db.prepare(
+                `INSERT INTO audit_logs (user_id, ledger_id, action, metadata_json)
+                 VALUES (?, ?, 'sync_push', ?)`
+              ).bind(
+                userId, null,
+                safeJsonStringify({ entityType: 'sync_conflict', entityId: null, details: conflictSample, level: 'INFO', logger: null }),
+              ),
+            );
+            continue;
+          }
+        }
 
         // Tombstone dominance: 删除后的同一 sync_id 不允许普通 upsert 复活。
         // 正常重新创建实体会生成新的 sync_id；允许旧设备用更晚 updated_at

@@ -207,6 +207,42 @@ describe('Sync - Push', () => {
     expect(history.at(-1)?.action).toBe('delete');
   });
 
+
+  it('should reject empty category names instead of overwriting valid metadata', async () => {
+    const catSyncId = crypto.randomUUID();
+    const base = Date.now();
+    const good = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: '__user_global__', entity_type: 'category', entity_sync_id: catSyncId, action: 'upsert',
+        payload: { name: '午餐', kind: 'expense', level: 2, sortOrder: 1 },
+        updated_at: new Date(base).toISOString(),
+      }] }),
+    });
+    expect(good.status).toBe(200);
+    expect((await good.json() as any).accepted).toBe(1);
+
+    const bad = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: '__user_global__', entity_type: 'category', entity_sync_id: catSyncId, action: 'upsert',
+        payload: { name: '', kind: 'expense', level: 1, sortOrder: 0 },
+        updated_at: new Date(base + 1000).toISOString(),
+      }] }),
+    });
+    expect(bad.status).toBe(200);
+    const body = await bad.json() as any;
+    expect(body.accepted).toBe(0);
+    expect(body.rejected).toBe(1);
+    expect(body.conflict_samples?.[0]?.reason).toBe('invalid_category_name_rejected');
+
+    const projection = getTable(env.db, 'user_category_projection').find((row: any) => row.sync_id === catSyncId);
+    expect(projection?.name).toBe('午餐');
+    expect(projection?.level).toBe(2);
+    const history = getTable(env.db, 'sync_changes').filter((row: any) => row.entity_type === 'category' && row.entity_sync_id === catSyncId);
+    expect(history).toHaveLength(1);
+  });
+
 });
 
 describe('Sync - Pull', () => {
