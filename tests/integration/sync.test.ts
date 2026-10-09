@@ -163,6 +163,50 @@ describe('Sync - Push', () => {
     const stored = getTable(env.db, 'sync_changes').find((row: any) => row.entity_type === 'account' && row.entity_sync_id === acctSyncId);
     expect(stored).toMatchObject({ scope: 'user', ledger_id: null });
   });
+
+  it('should reject resurrection after an account tombstone even with a newer timestamp', async () => {
+    const acctSyncId = crypto.randomUUID();
+    const base = Date.now();
+
+    const upsertRes = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: ledgerId, entity_type: 'account', entity_sync_id: acctSyncId, action: 'upsert',
+        payload: { name: 'stale account', type: 'alipay', currency: 'CNY', initialBalance: -1000 },
+        updated_at: new Date(base).toISOString(),
+      }] }),
+    });
+    expect(upsertRes.status).toBe(200);
+
+    const deleteRes = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: ledgerId, entity_type: 'account', entity_sync_id: acctSyncId, action: 'delete', payload: {},
+        updated_at: new Date(base + 1000).toISOString(),
+      }] }),
+    });
+    expect(deleteRes.status).toBe(200);
+    const deletedBody = await deleteRes.json() as any;
+    expect(deletedBody.accepted).toBe(1);
+    expect(getTable(env.db, 'user_account_projection').some((row: any) => row.sync_id === acctSyncId)).toBe(false);
+
+    const resurrectRes = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: ledgerId, entity_type: 'account', entity_sync_id: acctSyncId, action: 'upsert',
+        payload: { name: 'stale account', type: 'alipay', currency: 'CNY', initialBalance: -1000 },
+        updated_at: new Date(base + 2000).toISOString(),
+      }] }),
+    });
+    expect(resurrectRes.status).toBe(200);
+    const resurrectBody = await resurrectRes.json() as any;
+    expect(resurrectBody.accepted).toBe(0);
+    expect(resurrectBody.rejected).toBe(1);
+    expect(getTable(env.db, 'user_account_projection').some((row: any) => row.sync_id === acctSyncId)).toBe(false);
+    const history = getTable(env.db, 'sync_changes').filter((row: any) => row.entity_type === 'account' && row.entity_sync_id === acctSyncId);
+    expect(history.at(-1)?.action).toBe('delete');
+  });
+
 });
 
 describe('Sync - Pull', () => {
