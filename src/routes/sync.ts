@@ -27,7 +27,7 @@ import { randomUUID } from 'crypto';
 import { insertAuditLog } from '../lib/audit';
 import { deleteFromStorage } from '../lib/storage-adapter';
 
-const CODE_VERSION = 'v1.7-category-integrity';
+const CODE_VERSION = 'v1.8-category-hierarchy-integrity';
 
 // ===========================
 // Snapshot Cache（与原版 snapshot_cache 对齐）
@@ -729,7 +729,8 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
         // 通过 legacy backfill 重新 push，若接受会覆盖正确的分类元数据并让历史
         // 交易在 App 中全部显示成默认/空分类。空名称 upsert 一律拒绝。
         if (change.entity_type === 'category' && change.action === 'upsert') {
-          const rawName = (change.payload as Record<string, unknown> | null | undefined)?.name;
+          const categoryPayload = change.payload as Record<string, unknown> | null | undefined;
+          const rawName = categoryPayload?.name;
           if (typeof rawName !== 'string' || rawName.trim().length === 0) {
             rejected++;
             conflictCount++;
@@ -742,6 +743,33 @@ const USER_GLOBAL_TYPES = ['category', 'account', 'tag', 'exchange_rate_override
             };
             if (conflictList.length < 20) conflictList.push(conflictSample);
             serverLogger.info('src.routers.sync', '[SYNC] REJECTED - invalid empty category name:', change.entity_sync_id);
+            conflictAuditStmts.push(
+              db.prepare(
+                `INSERT INTO audit_logs (user_id, ledger_id, action, metadata_json)
+                 VALUES (?, ?, 'sync_push', ?)`
+              ).bind(
+                userId, null,
+                safeJsonStringify({ entityType: 'sync_conflict', entityId: null, details: conflictSample, level: 'INFO', logger: null }),
+              ),
+            );
+            continue;
+          }
+
+          const incomingLevel = Number(categoryPayload?.level ?? 1);
+          const parentSyncId = typeof categoryPayload?.parentSyncId === 'string' ? categoryPayload.parentSyncId.trim() : '';
+          const parentName = typeof categoryPayload?.parentName === 'string' ? categoryPayload.parentName.trim() : '';
+          if (incomingLevel === 2 && !parentSyncId && !parentName) {
+            rejected++;
+            conflictCount++;
+            const conflictSample = {
+              reason: 'invalid_category_parent_rejected',
+              ledgerId: change.ledger_id,
+              entityType: change.entity_type,
+              entitySyncId: change.entity_sync_id,
+              existingChangeId: latestChange?.change_id ?? null,
+            };
+            if (conflictList.length < 20) conflictList.push(conflictSample);
+            serverLogger.info('src.routers.sync', '[SYNC] REJECTED - level 2 category without parent:', change.entity_sync_id);
             conflictAuditStmts.push(
               db.prepare(
                 `INSERT INTO audit_logs (user_id, ledger_id, action, metadata_json)

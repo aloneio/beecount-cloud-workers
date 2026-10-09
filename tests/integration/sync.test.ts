@@ -215,7 +215,7 @@ describe('Sync - Push', () => {
       method: 'POST', headers: pushHeaders(),
       body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
         ledger_id: '__user_global__', entity_type: 'category', entity_sync_id: catSyncId, action: 'upsert',
-        payload: { name: '午餐', kind: 'expense', level: 2, sortOrder: 1 },
+        payload: { name: '餐饮', kind: 'expense', level: 1, sortOrder: 1 },
         updated_at: new Date(base).toISOString(),
       }] }),
     });
@@ -237,11 +237,57 @@ describe('Sync - Push', () => {
     expect(body.conflict_samples?.[0]?.reason).toBe('invalid_category_name_rejected');
 
     const projection = getTable(env.db, 'user_category_projection').find((row: any) => row.sync_id === catSyncId);
-    expect(projection?.name).toBe('午餐');
-    expect(projection?.level).toBe(2);
+    expect(projection?.name).toBe('餐饮');
+    expect(projection?.level).toBe(1);
     const history = getTable(env.db, 'sync_changes').filter((row: any) => row.entity_type === 'category' && row.entity_sync_id === catSyncId);
     expect(history).toHaveLength(1);
   });
+
+  it('should reject level-2 categories without a parent', async () => {
+    const catSyncId = crypto.randomUUID();
+    const base = Date.now();
+    const parentId = crypto.randomUUID();
+
+    const parentRes = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: '__user_global__', entity_type: 'category', entity_sync_id: parentId, action: 'upsert',
+        payload: { name: '餐饮', kind: 'expense', level: 1, sortOrder: 0 },
+        updated_at: new Date(base).toISOString(),
+      }] }),
+    });
+    expect(parentRes.status).toBe(200);
+
+    const good = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: '__user_global__', entity_type: 'category', entity_sync_id: catSyncId, action: 'upsert',
+        payload: { name: '早餐', kind: 'expense', level: 2, sortOrder: 0, parentName: '餐饮', parentSyncId: parentId },
+        updated_at: new Date(base + 1000).toISOString(),
+      }] }),
+    });
+    expect(good.status).toBe(200);
+    expect((await good.json() as any).accepted).toBe(1);
+
+    const orphan = await env.app.request('/api/v1/sync/push', {
+      method: 'POST', headers: pushHeaders(),
+      body: JSON.stringify({ device_id: TEST_DEVICE_ID, changes: [{
+        ledger_id: '__user_global__', entity_type: 'category', entity_sync_id: catSyncId, action: 'upsert',
+        payload: { name: '早餐', kind: 'expense', level: 2, sortOrder: 0 },
+        updated_at: new Date(base + 2000).toISOString(),
+      }] }),
+    });
+    expect(orphan.status).toBe(200);
+    const body = await orphan.json() as any;
+    expect(body.accepted).toBe(0);
+    expect(body.rejected).toBe(1);
+    expect(body.conflict_samples?.[0]?.reason).toBe('invalid_category_parent_rejected');
+
+    const projection = getTable(env.db, 'user_category_projection').find((row: any) => row.sync_id === catSyncId);
+    expect(projection?.parent_sync_id).toBe(parentId);
+    expect(projection?.level).toBe(2);
+  });
+
 
 });
 
