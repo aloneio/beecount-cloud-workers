@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import type { SQLInputValue } from 'node:sqlite';
 import { initializeDatabase } from '../../src/db/schema';
+import { createRealDb } from '../helpers/realsql-db';
 
 // 全新库初始化必须在真实 SQLite 上完整成功（schema.ts 曾含引用已删列的
 // 死索引 idx_audit_logs_entity → no such column → 外层 catch 吞掉 → 后续

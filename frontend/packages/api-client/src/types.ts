@@ -259,6 +259,7 @@ export type ReadCategory = {
   icon_cloud_file_id?: string | null
   icon_cloud_sha256?: string | null
   parent_name: string | null
+  parent_sync_id?: string | null
   last_change_id: number
   ledger_id?: string | null
   ledger_name?: string | null
@@ -644,6 +645,7 @@ export type CategoryPayload = {
   icon_cloud_file_id?: string | null
   icon_cloud_sha256?: string | null
   parent_name?: string | null
+  parent_sync_id?: string | null
 }
 
 export type TagPayload = {
