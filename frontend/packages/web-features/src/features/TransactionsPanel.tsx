@@ -456,7 +456,7 @@ export function TransactionsPanel({
             <fieldset disabled={saving || selectingImages} className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1">
               <Label>{t('shell.ledger')}</Label>
-              <Select value={writeLedgerId || undefined} onValueChange={onWriteLedgerIdChange} disabled={Boolean(form.editingId) || saving}>
+              <Select value={writeLedgerId} onValueChange={onWriteLedgerIdChange} disabled={Boolean(form.editingId) || saving}>
                 <SelectTrigger>
                   <SelectValue placeholder={t('shell.ledger')} />
                 </SelectTrigger>
@@ -604,8 +604,11 @@ export function TransactionsPanel({
               <>
                 <div className="space-y-1">
                   <Label>{t('transactions.placeholder.fromAccountName')}</Label>
+                  {/* Keep the empty string controlled. Radix uses "" for the placeholder;
+                      switching to undefined makes the Select uncontrolled and can leave a
+                      stale visible account after transfer mode/account changes clear state. */}
                   <Select
-                    value={form.from_account_name || undefined}
+                    value={form.from_account_name}
                     disabled={dictionariesLoading}
                     onValueChange={(value) => onFormChange({ ...form, from_account_name: value, to_account_name: '', transfer_to_amount: '' })}
                   >
@@ -629,7 +632,7 @@ export function TransactionsPanel({
                 <div className="space-y-1">
                   <Label>{t('transactions.placeholder.toAccountName')}</Label>
                   <Select
-                    value={form.to_account_name || undefined}
+                    value={form.to_account_name}
                     disabled={dictionariesLoading}
                     onValueChange={(value) => onFormChange({ ...form, to_account_name: value, transfer_to_amount: '' })}
                   >
