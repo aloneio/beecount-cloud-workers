@@ -22,7 +22,7 @@ import { serverLogger } from '../lib/logger';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
-import { validateAccessToken, createAccessToken, createRefreshToken, verifyPassword, base64urlDecode, sha256 } from '../auth';
+import { validateAccessToken, validateSignedToken, createAccessToken, createRefreshToken, verifyPassword, sha256 } from '../auth';
 import { upsertDevice } from '../lib/device-upsert';
 import { isRateLimitedDistributed } from '../lib/rate-limit';
 
@@ -344,22 +344,11 @@ twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c)
     return c.json({ error: 'Missing challenge token.' }, 400);
   }
 
-  // 验证 challenge_token 签名（防止伪造）
-  const challengeResult = await validateAccessToken(challenge_token, jwtSecret);
-  if (!challengeResult || !('userId' in challengeResult)) {
+  // 验证 challenge_token 签名 + 类型必须是 totp_challenge
+  // （不能用 validateAccessToken——它只认 type=access，#16 加固后会误拒 challenge token）
+  const challengeResult = await validateSignedToken(challenge_token, jwtSecret, 'totp_challenge');
+  if (!challengeResult || 'expired' in challengeResult) {
     return c.json({ error: 'Invalid or expired challenge token.' }, 401);
-  }
-  // 验证 token type 必须是 totp_challenge（防止用 access token 绕过 2FA）
-  const challengeParts = challenge_token.split('.');
-  if (challengeParts.length === 3) {
-    try {
-      const payloadStr = base64urlDecode(challengeParts[1]);
-      if (!payloadStr) { return c.json({ error: 'Invalid or expired challenge token.' }, 401); }
-      const payload = JSON.parse(payloadStr);
-      if (payload.type !== 'totp_challenge') {
-        return c.json({ error: 'Invalid or expired challenge token.' }, 401);
-      }
-    } catch { return c.json({ error: 'Invalid or expired challenge token.' }, 401); }
   }
   const userId = challengeResult.userId;
 
