@@ -339,8 +339,7 @@ twoFactorRouter.post('/verify', zValidator('json', TwoFAVerifySchema), async (c)
     return c.json({ error: 'Missing challenge token.' }, 400);
   }
 
-  // challenge 需要完整验签 + 过期检查，并且只能接受 totp_challenge 类型。
-  // access / refresh token 不能替代第二因素。
+  // Verify signature, expiration, and totp_challenge type; access/refresh tokens are not accepted.
   const challengeResult = await validateSignedToken(challenge_token, jwtSecret, 'totp_challenge');
   if (!challengeResult || 'expired' in challengeResult) {
     return c.json({ error: 'Invalid or expired challenge token.' }, 401);
