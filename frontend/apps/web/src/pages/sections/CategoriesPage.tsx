@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   createCategory,
@@ -13,7 +13,7 @@ import {
   type WorkspaceTag,
   type WorkspaceTransaction,
 } from '@beecount/api-client'
-import { useT, useToast } from '@beecount/ui'
+import { Button, useT, useToast } from '@beecount/ui'
 import {
   CategoriesPanel,
   ConfirmDialog,
@@ -30,6 +30,9 @@ import { useLedgers } from '../../context/LedgersContext'
 import { usePageCache } from '../../context/PageDataCacheContext'
 import { useSyncRefresh } from '../../context/SyncSocketContext'
 import { localizeError } from '../../i18n/errors'
+import {
+  ensureProjectAdvanceCategories, ProjectAdvanceCategoryConflict,
+} from '../../lib/projectAdvanceCategories'
 
 /**
  * 分类管理页 —— 分类列表 + CRUD + 自定义图标的 preview URL 解析(拿
@@ -53,6 +56,8 @@ export function CategoriesPage() {
   // 编辑 dialog 受控开关 — CategoriesPanel 行编辑、CategoryDetailDialog 联动
   // 编辑都通过这个 state 触发;由 panel 内部 onCreate/onEdit 也会切到 true。
   const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [addingAdvancePreset, setAddingAdvancePreset] = useState(false)
+  const advancePresetLock = useRef(false)
 
   // detail 弹窗已迁到 GlobalEntityDialogs(AppShell 顶层)。本页只负责
   // dispatch openDetailCategory 让全局打开;同时监听 openEditCategory
@@ -136,6 +141,39 @@ export function CategoriesPage() {
     }
   }
 
+  // Explicit, per-user import. Never seed every account during deployment.
+  // The standard category write API records sync_changes for the mobile client.
+  const addProjectAdvancePreset = async () => {
+    if (advancePresetLock.current) return
+    if (!activeLedgerId) {
+      toast.error(t('shell.selectLedgerFirst'), t('notice.error'))
+      return
+    }
+    advancePresetLock.current = true
+    setAddingAdvancePreset(true)
+    try {
+      const created = await ensureProjectAdvanceCategories(
+        () => fetchWorkspaceCategories(token, { limit: 500 }),
+        (payload) => retryOnConflict(activeLedgerId, (base) =>
+          createCategory(token, activeLedgerId, base, payload)),
+      )
+      await refresh()
+      notifySuccess(created
+        ? t('categories.projectAdvance.created', { count: created })
+        : t('categories.projectAdvance.alreadyAdded'))
+    } catch (err) {
+      await refresh()
+      if (err instanceof ProjectAdvanceCategoryConflict) {
+        toast.error(t('categories.projectAdvance.conflict', { name: err.categoryName }), t('notice.error'))
+      } else {
+        toast.error(`${localizeError(err, t)} ${t('categories.projectAdvance.retryHint')}`, t('notice.error'))
+      }
+    } finally {
+      advancePresetLock.current = false
+      setAddingAdvancePreset(false)
+    }
+  }
+
   const enterEdit = useCallback((row: ReadCategory) => {
     setForm({
       editingId: row.id,
@@ -177,6 +215,19 @@ export function CategoriesPage() {
 
   return (
     <>
+      <div className="mb-4 flex flex-col gap-2 rounded-lg border border-border/50 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-medium">{t('categories.projectAdvance.title')}</div>
+          <p className="mt-1 text-xs text-muted-foreground">{t('categories.projectAdvance.hint')}</p>
+        </div>
+        <Button
+          variant="outline"
+          disabled={addingAdvancePreset || !activeLedgerId}
+          onClick={() => void addProjectAdvancePreset()}
+        >
+          {addingAdvancePreset ? t('categories.projectAdvance.creating') : t('categories.projectAdvance.action')}
+        </Button>
+      </div>
       <CategoriesPanel
         form={form}
         rows={rows}
